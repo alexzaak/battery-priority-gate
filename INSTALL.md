@@ -1,4 +1,4 @@
-# SENEC–Marstek Gate: inaktive HA-Integration v0.1.0
+# SENEC–Marstek Gate: inaktive HA-Integration v0.4.0
 
 ## Umfang
 
@@ -14,4 +14,4 @@
 
 **Stand 06.10.2026:** Alex hat das Paket selbst installiert; HA meldete den Config-Entry `senec_marstek_gate` als `loaded` und den registrierten Statussensor `sensor.senec_marstek_gate_status=inaktiv`. Die Dateien auf HA konnten nicht bytegenau mit dem Repository verglichen werden. Tests und CI laufen ausschließlich offline; kein aktiver Gate-Controller. Keine produktive Gate-Steuerung ohne spätere gesonderte technische Abnahme und Freigabe.
 
-**Seit v0.2.0** liest der vorhandene Statussensor beim Polling nur die sieben vereinbarten HA-Zustände aus dem Speicher der HA-State-Machine und zeigt dazu quellbezogene Diagnosecodes; `inaktiv` und `production_ready=False` bleiben auch mit Manifestversion **0.3.1** unverändert. HACS meldete am 06.10.2026 den installierten Release-Tag `v0.3.0`, dessen Manifest noch `0.2.0` auswies; daraus folgt keine bestätigte Installation von 0.3.1. Vor einem Upgrade vorhandene HA-Dateien/Backup prüfen, HACS-Aktualisierung kontrolliert durchführen, HA neu starten und Config-Entry, Sensorattribute, Log und unveränderte Geräte rücklesen. Ein GitHub-Commit oder grüner Offline-CI-Lauf ersetzt diese Runtime-Abnahme nicht.
+**Seit v0.2.0** liest der vorhandene Statussensor beim Polling nur die sieben vereinbarten HA-Zustände aus dem Speicher der HA-State-Machine und zeigt dazu quellbezogene Diagnosecodes; `inaktiv` und `production_ready=False` bleiben auch mit Manifestversion **0.4.0** unverändert. Neu in v0.4.0 sind die offline nutzbaren `authority.py`-/`controller.py`-Module sowie der Sensorparameter `runtime_version` als Hinweis auf tatsächlich geladenen Python-Code. Die Offline-Module sind **nicht** mit HA-Livewerten oder Aktoren verdrahtet. HACS zeigte vor diesem Release `v0.3.1` als installiert; daraus folgt keine Installation von v0.4.0. Vor einem Upgrade vorhandene HA-Dateien/Backup prüfen, HACS-Aktualisierung kontrolliert durchführen, HA neu starten und Config-Entry, `runtime_version`, Sensorattribute, Log und unveränderte Geräte rücklesen. Ein GitHub-Commit oder grüner Offline-CI-Lauf ersetzt diese Runtime-Abnahme nicht.
