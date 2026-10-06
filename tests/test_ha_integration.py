@@ -119,7 +119,7 @@ class IntegrationContract(unittest.TestCase):
         manifest = json.loads((COMPONENT / 'manifest.json').read_text())
         self.assertEqual(manifest['domain'], 'senec_marstek_gate')
         self.assertTrue(manifest['config_flow'])
-        self.assertEqual(manifest['version'], '0.2.0')
+        self.assertEqual(manifest['version'], '0.3.1')
         source = '\n'.join(p.read_text() for p in COMPONENT.glob('*.py'))
         for forbidden in ('async_call(', 'call_service(', 'number.set_value',
                           'switch.turn_on', 'switch.turn_off', 'verified=True'):
