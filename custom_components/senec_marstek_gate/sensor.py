@@ -5,6 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .source_diagnostics import inspect_sources
+from .version import VERSION
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
@@ -21,11 +22,14 @@ class GateInstallStatus(SensorEntity):
 
     def __init__(self, entry_id: str) -> None:
         self._attr_unique_id = f'{entry_id}_install_status'
-        self._attr_extra_state_attributes = {'production_ready': False, 'source_checks': {}}
+        self._attr_extra_state_attributes = {
+            'production_ready': False, 'runtime_version': VERSION, 'source_checks': {},
+        }
 
     async def async_update(self) -> None:
         """Poll only HA's in-memory state machine; never call services or devices."""
         self._attr_extra_state_attributes = {
             'production_ready': False,
+            'runtime_version': VERSION,
             'source_checks': inspect_sources(self.hass.states),
         }

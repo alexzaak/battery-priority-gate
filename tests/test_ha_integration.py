@@ -100,6 +100,7 @@ class IntegrationContract(unittest.TestCase):
             self.assertEqual(len(calls), 7)
             self.assertEqual(set(entity._attr_extra_state_attributes['source_checks'].values()), {'missing'})
             self.assertFalse(entity._attr_extra_state_attributes['production_ready'])
+            self.assertEqual(entity._attr_extra_state_attributes['runtime_version'], '0.4.0')
             from datetime import datetime, timezone
             valid = types.SimpleNamespace(
                 entity_id='sensor.senec_enfluri_net_power_total', state='140',
@@ -117,9 +118,11 @@ class IntegrationContract(unittest.TestCase):
 
     def test_manifest_is_discoverable_but_control_cannot_be_enabled(self):
         manifest = json.loads((COMPONENT / 'manifest.json').read_text())
+        version_source = (COMPONENT / 'version.py').read_text()
+        self.assertIn("VERSION = '0.4.0'", version_source)
         self.assertEqual(manifest['domain'], 'senec_marstek_gate')
         self.assertTrue(manifest['config_flow'])
-        self.assertEqual(manifest['version'], '0.3.1')
+        self.assertEqual(manifest['version'], '0.4.0')
         source = '\n'.join(p.read_text() for p in COMPONENT.glob('*.py'))
         for forbidden in ('async_call(', 'call_service(', 'number.set_value',
                           'switch.turn_on', 'switch.turn_off', 'verified=True'):
