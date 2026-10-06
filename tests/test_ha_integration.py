@@ -123,9 +123,10 @@ class IntegrationContract(unittest.TestCase):
         self.assertEqual(manifest['domain'], 'senec_marstek_gate')
         self.assertTrue(manifest['config_flow'])
         self.assertEqual(manifest['version'], '0.4.0')
-        source = '\n'.join(p.read_text() for p in COMPONENT.glob('*.py'))
+        source = '\n'.join((COMPONENT / p).read_text() for p in ('__init__.py', 'sensor.py', 'config_flow.py'))
         for forbidden in ('async_call(', 'call_service(', 'number.set_value',
-                          'switch.turn_on', 'switch.turn_off', 'verified=True'):
+                          'switch.turn_on', 'switch.turn_off', 'verified=True', 'from .writer import',
+                          'import writer', 'apply_request('):
             self.assertNotIn(forbidden, source)
 
 
