@@ -21,9 +21,11 @@ class GateInstallStatus(SensorEntity):
     _attr_native_value = 'inaktiv'
 
     def __init__(self, entry_id: str) -> None:
+        self._entry_id = entry_id
         self._attr_unique_id = f'{entry_id}_install_status'
         self._attr_extra_state_attributes = {
-            'production_ready': False, 'runtime_version': VERSION, 'source_checks': {},
+            'production_ready': False, 'runtime_version': VERSION,
+            'loop_state': 'inactive', 'source_checks': {},
         }
 
     async def async_update(self) -> None:
@@ -31,5 +33,7 @@ class GateInstallStatus(SensorEntity):
         self._attr_extra_state_attributes = {
             'production_ready': False,
             'runtime_version': VERSION,
+            'loop_state': getattr(getattr(self.hass, 'data', {}).get('senec_marstek_gate', {}).get(self._entry_id),
+                                  'last_reason', 'inactive'),
             'source_checks': inspect_sources(self.hass.states),
         }

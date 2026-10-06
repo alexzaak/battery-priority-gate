@@ -40,7 +40,7 @@ class WriterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_zero_requires_both_setpoints_and_ac_idle(self):
         hass = FakeHass()
-        self.assertEqual(await apply_request(hass, 1, ('zero_intent', None), AUTH, PROOF,
+        self.assertEqual(await apply_request(hass, 1, ('zero_intent', 0), AUTH, PROOF,
                          LIMITS, lambda: True, lambda e, v: hass.values[e] == v,
                          lambda device: True), 'zero_intent')
         self.assertEqual(len(hass.calls), 2)
@@ -54,7 +54,7 @@ class WriterTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(authority=authority, proof=proof):
                 hass = FakeHass()
                 with self.assertRaises(WriteBlocked):
-                    await apply_request(hass, 1, ('zero_intent', None), authority, proof,
+                    await apply_request(hass, 1, ('zero_intent', 0), authority, proof,
                                         LIMITS, lambda: True, lambda e, v: True, lambda d: True)
                 self.assertEqual(hass.calls, [])
 
@@ -77,7 +77,7 @@ class WriterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reject_invalid_power_and_unmanaged_device(self):
         for device, request in ((1, ('charge_intent', float('nan'))),
-                                (1, ('discharge_intent', 301)), (2, ('zero_intent', None)),
+                                (1, ('discharge_intent', 301)), (2, ('zero_intent', 0)),
                                 (1, ('hold', None)), (1, ('charge_intent', -1))):
             hass = FakeHass()
             with self.subTest(device=device, request=request), self.assertRaises(WriteBlocked):
