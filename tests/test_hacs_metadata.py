@@ -12,6 +12,11 @@ REPO = 'https://github.com/alexzaak/battery-priority-gate'
 
 
 class HacsRepositoryTest(unittest.TestCase):
+    def test_license_is_present(self):
+        license_text = (ROOT / 'LICENSE').read_text()
+        self.assertIn('MIT License', license_text)
+        self.assertIn('Copyright (c) 2026 alexzaak', license_text)
+
     def test_single_integration_with_required_manifest_links(self):
         self.assertEqual([p.name for p in COMPONENTS.iterdir() if p.is_dir() and not p.name.startswith('__')],
                          ['senec_marstek_gate'])
