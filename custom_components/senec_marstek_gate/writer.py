@@ -37,8 +37,8 @@ def _check(device, request, authority, evidence, limits):
         raise WriteBlocked('no verified write authority')
     kind, watts = request
     if kind == 'zero_intent':
-        if watts is not None:
-            raise WriteBlocked('zero intent has no watts')
+        if type(watts) not in (int, float) or watts != 0:
+            raise WriteBlocked('zero intent requires 0 W')
     elif kind in ('charge_intent', 'discharge_intent'):
         cap = limits.max_charge_w[device] if kind == 'charge_intent' else limits.max_discharge_w[device]
         if type(watts) not in (int, float) or not isfinite(watts) or not 0 < watts <= cap:
