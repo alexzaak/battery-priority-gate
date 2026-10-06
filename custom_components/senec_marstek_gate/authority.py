@@ -55,7 +55,7 @@ def advance(state: Authority, event: str, *, device: int | None = None,
     if event == 'request_fallback':
         if (state.source == 'enfluri' and primary_failed is True and
                 isinstance(request_id, str) and request_id):
-            return replace(state, pending=Pending('source', 'tibber', request_id))
+            return replace(state, inhibited=True, pending=Pending('source', 'tibber', request_id))
         return state
     if event == 'request_return':
         if (state.source == 'tibber' and primary_ready is True and

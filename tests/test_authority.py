@@ -57,6 +57,7 @@ class AuthorityTest(unittest.TestCase):
         state = advance(Authority(inhibited=False), 'request_fallback', request_id='grid-fail',
                         primary_failed=True)
         self.assertEqual(state.pending, Pending('source', 'tibber', 'grid-fail'))
+        self.assertTrue(state.inhibited)
         rejected = advance(state, 'approve', request_id='grid-fail', healthy=True,
                            primary_failed=False, alternate_ready=True)
         self.assertEqual(rejected.source, 'enfluri')
