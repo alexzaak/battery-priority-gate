@@ -1,0 +1,15 @@
+{
+  "source": "HA REST /api/history/period",
+  "retrieved_on": "2026-10-05",
+  "sample_time": "2026-10-05T06:29:00+02:00",
+  "has_last_reported": false,
+  "data_quality": "Most recent recorded last_changed at or before sample time, not synchronized telemetry. PV and SoC are history-window carry-forward values; HA history response lacks last_reported. Physical heartbeat, meter topology and controller provenance not proved by this excerpt.",
+  "readings": {
+    "sensor.senec_battery_state_power": {"value_w": -1954.26000976562, "last_changed": "2026-10-05T04:28:58.920582+00:00"},
+    "sensor.senec_enfluri_net_power_total": {"value_w": -17.53564453125, "last_changed": "2026-10-05T04:28:58.922898+00:00"},
+    "sensor.senec_solar_generated_power": {"value_w": 0.0, "last_changed": "2026-10-05T04:27:00+00:00", "carry_forward": true},
+    "sensor.marstek_venus_2_ac_power": {"value_w": -149, "last_changed": "2026-10-05T04:28:42.851546+00:00", "role": "historical secondary AC comparison, not primary gate direction"},
+    "sensor.marstek_venus_2_battery_power": {"value_w": 115, "last_changed": "2026-10-05T04:28:56.872227+00:00", "measurement_point": "battery-side power; positive charge in this dated case"},
+    "sensor.marstek_venus_2_battery_soc": {"value_percent": 17, "last_changed": "2026-10-05T04:27:00+00:00", "carry_forward": true}
+  }
+}
