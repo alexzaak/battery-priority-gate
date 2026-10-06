@@ -1,0 +1,1 @@
+{"config":{"step":{"user":{"title":"SENEC–Marstek Gate (inaktiv)","description":"Installiert ausschließlich einen Inaktiv-Statussensor. Keine Gerätebefehle, keine automatische Übernahme und keine Steuerung nach Neustart."}},"abort":{"single_instance_allowed":"Die Integration ist bereits eingerichtet."}}}
