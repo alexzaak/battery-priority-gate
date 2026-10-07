@@ -134,8 +134,9 @@ class IntegrationContract(unittest.TestCase):
             self.assertGreaterEqual(len(calls), 7)
             self.assertEqual(set(entity._attr_extra_state_attributes['source_checks'].values()), {'missing'})
             self.assertFalse(entity._attr_extra_state_attributes['production_ready'])
-            self.assertEqual(entity._attr_extra_state_attributes['runtime_version'], '0.5.2')
+            self.assertEqual(entity._attr_extra_state_attributes['runtime_version'], '0.5.3')
             self.assertEqual(entity._attr_extra_state_attributes['loop_state'], 'inactive')
+            self.assertEqual(entity._attr_extra_state_attributes['handover_phase'], 'not_configured')
             self.assertEqual(entity._attr_extra_state_attributes['handover_observation'], 'maintenance_or_unknown')
             from datetime import datetime, timezone
             valid = types.SimpleNamespace(
@@ -155,10 +156,10 @@ class IntegrationContract(unittest.TestCase):
     def test_manifest_is_discoverable_but_control_cannot_be_enabled(self):
         manifest = json.loads((COMPONENT / 'manifest.json').read_text())
         version_source = (COMPONENT / 'version.py').read_text()
-        self.assertIn("VERSION = '0.5.2'", version_source)
+        self.assertIn("VERSION = '0.5.3'", version_source)
         self.assertEqual(manifest['domain'], 'senec_marstek_gate')
         self.assertTrue(manifest['config_flow'])
-        self.assertEqual(manifest['version'], '0.5.2')
+        self.assertEqual(manifest['version'], '0.5.3')
         source = '\n'.join((COMPONENT / p).read_text() for p in ('__init__.py', 'sensor.py', 'config_flow.py'))
         for forbidden in ('async_call(', 'call_service(', 'number.set_value',
                           'switch.turn_on', 'switch.turn_off', 'verified=True', 'apply_request('):

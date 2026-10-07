@@ -27,7 +27,7 @@ class GateInstallStatus(SensorEntity):
         self._attr_extra_state_attributes = {
             'production_ready': False, 'runtime_version': VERSION,
             'loop_state': 'inactive', 'source_checks': {},
-            'handover_observation': 'unknown',
+            'handover_observation': 'unknown', 'handover_phase': 'not_configured',
         }
 
     async def async_update(self) -> None:
@@ -39,4 +39,6 @@ class GateInstallStatus(SensorEntity):
                                   'last_reason', 'inactive'),
             'source_checks': inspect_sources(self.hass.states),
             'handover_observation': inspect_handover(self.hass.states).reason,
+            'handover_phase': getattr(getattr(getattr(self.hass, 'data', {}).get('senec_marstek_gate', {}).get(self._entry_id),
+                                       'handover', None), 'phase', 'not_configured'),
         }

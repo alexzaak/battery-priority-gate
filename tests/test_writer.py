@@ -45,7 +45,7 @@ class WriterTests(unittest.IsolatedAsyncioTestCase):
             await original(domain,service,data,blocking)
             put(data['entity_id'],data['value'])
         hass.services = SimpleNamespace(async_call=service)
-        feedback = HAFeedback(hass.states,timeout_s=.05,poll_s=.001,
+        feedback = HAFeedback(hass.states,timeout_s=.3,poll_s=.001,
                               ac_max_abs_w=20,ac_sample_gap_s=.002)
         with self.assertRaises(FeedbackTimeout):
             await apply_request(hass,1,('charge_intent',200),AUTH,PROOF,LIMITS,

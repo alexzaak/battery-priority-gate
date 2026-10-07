@@ -1,5 +1,6 @@
 """Controller cycle regression tests using HA-shaped states and service API."""
 import asyncio
+from dataclasses import replace
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from custom_components.senec_marstek_gate.authority import Authority
 from custom_components.senec_marstek_gate.controller import Evidence, Limits
 from custom_components.senec_marstek_gate.quality import REQUIRED
 from custom_components.senec_marstek_gate.runtime import GateRuntime, ControllerBinding
+from custom_components.senec_marstek_gate.handover_protocol import HandoverDenied, HandoverIncomplete
 
 NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
 LIMITS = Limits(100, 80, 30, {1: 250, 2: 250}, {1: 250, 2: 250}, 10, 14)
@@ -83,6 +85,421 @@ def binding(hass):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_external_pool_loss_invalidates_held_handover_lease(self):
+        hass=HA(NOW)
+        runtime=GateRuntime(hass,binding(hass),Authority('gate_beide','enfluri',False))
+        revoked=[]
+        runtime.handover=SimpleNamespace(phase='held',invalidate=lambda:revoked.append(True))
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1']
+        runtime.handle_state_change(SimpleNamespace(data={'entity_id':pool.entity_id,'new_state':pool}))
+        self.assertEqual(revoked,[True])
+        self.assertTrue(runtime.authority.inhibited)
+
+    async def test_manual_override_invalidates_held_handover_lease(self):
+        hass=HA(NOW)
+        runtime=GateRuntime(hass,binding(hass),Authority('gate_beide','enfluri',False))
+        revoked=[]
+        runtime.handover=SimpleNamespace(phase='held',invalidate=lambda:revoked.append(True))
+        eid='input_boolean.marstek_gate_venus_1_manueller_vorrang'
+        manual=hass.states.values[eid];manual.state='on'
+        runtime.handle_state_change(SimpleNamespace(data={'entity_id':eid,'new_state':manual}))
+        self.assertEqual(revoked,[True])
+        self.assertFalse(runtime._live_guard(1))
+
+    async def test_delayed_maintenance_automation_off_event_invalidates_held_lease(self):
+        hass=HA(NOW)
+        runtime=GateRuntime(hass,binding(hass),Authority('gate_beide','enfluri',False))
+        revoked=[]
+        runtime.handover=SimpleNamespace(phase='held',invalidate=lambda:revoked.append(True))
+        eid='automation.marstek_wartung_beide_manuell_und_0_w'
+        # hass.states still reports on; the event itself reports a prior off.
+        runtime.handle_state_change(SimpleNamespace(data={'entity_id':eid,
+            'new_state':hass.states.state(eid,'off',NOW)}))
+        self.assertEqual(revoked,[True])
+        self.assertTrue(runtime.authority.inhibited)
+
+    async def test_runtime_joint_handover_requires_explicit_bound_callbacks(self):
+        hass=HA(NOW)
+        runtime=GateRuntime(hass,binding(hass))
+        with self.assertRaises(HandoverDenied):
+            await runtime.async_takeover(SimpleNamespace(request_id='x', action='takeover', devices=(1,2)))
+        self.assertEqual(hass.calls,[])
+
+    async def test_queued_takeover_cannot_grant_after_unload(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status'].attributes
+        pool['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            hass.calls.append((domain,service,data['entity_id']))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        runtime.handover.timeout_s=.01
+        runtime.handover.poll_s=.001
+        await runtime._lock.acquire()
+        task=asyncio.create_task(runtime.async_takeover(SimpleNamespace(
+            request_id='new-request',action='takeover',devices=(1,2))))
+        await asyncio.sleep(0)
+        runtime.close()
+        runtime._lock.release()
+        with self.assertRaises(HandoverDenied):await task
+        self.assertEqual(hass.calls,[])
+        self.assertEqual(runtime.authority.ownership,'manual')
+
+    async def test_queued_return_cannot_call_coordinator_after_unload(self):
+        hass=HA(NOW)
+        runtime=GateRuntime(hass,binding(hass),Authority('gate_beide','enfluri',False))
+        calls=[]
+        class FakeHandover:
+            def invalidate(self):calls.append('invalidate')
+            async def return_to_auto(self,permit):
+                calls.append('return')
+                return True
+        runtime.handover=FakeHandover()
+        await runtime._lock.acquire()
+        task=asyncio.create_task(runtime.async_return(SimpleNamespace(request_id='return')))
+        await asyncio.sleep(0)
+        runtime.close()
+        runtime._lock.release()
+        with self.assertRaises(HandoverDenied):await task
+        self.assertEqual(calls,['invalidate'])
+        self.assertEqual(hass.calls,[])
+
+    async def test_unapproved_return_does_not_revoke_held_gate_or_consume_lease(self):
+        hass=HA(NOW)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:False,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b,Authority('gate_beide','enfluri',False))
+        runtime.handover.phase='held'  # synthetic lease; no actors touched
+        denied=SimpleNamespace(request_id='unauthorized',action='return',devices=(1,2))
+        with self.assertRaises(HandoverDenied):await runtime.async_return(denied)
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+        self.assertEqual(runtime.handover.used_requests,set())
+        self.assertEqual(hass.calls,[])
+
+    async def test_replayed_return_does_not_revoke_held_gate(self):
+        hass=HA(NOW)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b,Authority('gate_beide','enfluri',False))
+        runtime.handover.phase='held'
+        runtime.handover.used_requests.add('already-consumed')
+        replay=SimpleNamespace(request_id='already-consumed',action='return',devices=(1,2))
+        with self.assertRaises(HandoverDenied):await runtime.async_return(replay)
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+        self.assertEqual(hass.calls,[])
+
+    async def test_invalid_return_queued_behind_tick_does_not_revoke_live_guard(self):
+        hass=HA(NOW)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:False,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b,Authority('gate_beide','enfluri',False))
+        runtime.handover.phase='held'
+        self.assertEqual(await runtime.async_tick(NOW),'settling')
+        hass.states.advance(NOW+timedelta(seconds=10))
+        entered=asyncio.Event();release=asyncio.Event()
+        original=hass.async_call
+        async def blocked_number(domain,service,data,blocking=False):
+            entered.set()
+            await release.wait()
+            await original(domain,service,data,blocking)
+        hass.services=SimpleNamespace(async_call=blocked_number)
+        tick=asyncio.create_task(runtime.async_tick(hass.states.now))
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            denied=SimpleNamespace(request_id='invalid-parallel',action='return',devices=(1,2))
+            rejection=asyncio.create_task(runtime.async_return(denied))
+            await asyncio.sleep(0)
+            self.assertFalse(rejection.done())
+            self.assertEqual(runtime.authority.ownership,'gate_beide')
+            self.assertTrue(runtime._live_guard(1))
+        finally:
+            release.set()
+        await asyncio.wait_for(tick,1)
+        with self.assertRaises(HandoverDenied):await rejection
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+
+    async def test_transient_pool_loss_during_stop_prevents_grant_even_if_restored(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        original=hass.async_call
+        async def switch_service(domain,service,data,blocking=False):
+            if domain=='switch':
+                n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+                hass.states.values[data['entity_id']].state='on'
+                pool.attributes['automatic_batteries'].remove(name)
+                pool.attributes['manual_batteries'].append(name)
+                hass.calls.append((data['entity_id'],service))
+            else:await original(domain,service,data,blocking)
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():
+            pool.attributes['manual_batteries'].remove('Marstek Venus 2')
+            pool.attributes['automatic_batteries'].append('Marstek Venus 2')
+            runtime.handle_state_change(SimpleNamespace(data={
+                'entity_id':pool.entity_id,'new_state':pool}))
+            pool.attributes['automatic_batteries'].remove('Marstek Venus 2')
+            pool.attributes['manual_batteries'].append('Marstek Venus 2')
+            return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_takeover(SimpleNamespace(
+                request_id='transient-loss',action='takeover',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(runtime.authority.ownership,'manual')
+        self.assertTrue(runtime.authority.inhibited)
+        self.assertEqual(len(hass.calls),2)
+
+    async def test_delayed_pool_loss_event_during_stop_blocks_grant(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='on'
+            pool.attributes['automatic_batteries'].remove(name)
+            pool.attributes['manual_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():
+            past_pool=hass.states.state(pool.entity_id,'charging',NOW,{
+                'automatic_batteries':['Marstek Venus 2'],
+                'manual_batteries':['Marstek Venus 1']})
+            # HA current state already recovered, but event conveys the loss.
+            runtime.handle_state_change(SimpleNamespace(data={
+                'entity_id':pool.entity_id,'new_state':past_pool}))
+            return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_takeover(SimpleNamespace(
+                request_id='delayed-loss',action='takeover',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(runtime.authority.ownership,'manual')
+
+    async def test_delayed_automation_loss_during_transfer_blocks_second_switch(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='on'
+            pool.attributes['automatic_batteries'].remove(name)
+            pool.attributes['manual_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+            if n==1:
+                eid='automation.marstek_wartung_beide_manuell_und_0_w'
+                runtime.handle_state_change(SimpleNamespace(data={'entity_id':eid,
+                    'new_state':hass.states.state(eid,'off',NOW)}))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_takeover(SimpleNamespace(
+                request_id='early-automation-loss',action='takeover',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(runtime.authority.ownership,'manual')
+        self.assertEqual(len(hass.calls),1)
+
+    async def test_pool_reverts_to_automatic_during_transfer_blocks_grant(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='on'
+            pool.attributes['automatic_batteries'].remove(name)
+            pool.attributes['manual_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+            if n==1:
+                delayed_pool=hass.states.state(pool.entity_id,'charging',NOW,{
+                    'automatic_batteries':['Marstek Venus 1','Marstek Venus 2'],
+                    'manual_batteries':[]})
+                runtime.handle_state_change(SimpleNamespace(data={
+                    'entity_id':pool.entity_id,'new_state':delayed_pool}))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_takeover(SimpleNamespace(
+                request_id='revert-to-auto-during-transfer',action='takeover',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(runtime.authority.ownership,'manual')
+        self.assertEqual(len(hass.calls),1)
+
+    async def test_normal_partial_pool_transition_during_transfer_allows_grant(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='on'
+            pool.attributes['automatic_batteries'].remove(name)
+            pool.attributes['manual_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+            if n==1:
+                partial_pool=hass.states.state(pool.entity_id,'charging',NOW,{
+                    'automatic_batteries':['Marstek Venus 2'],
+                    'manual_batteries':['Marstek Venus 1']})
+                runtime.handle_state_change(SimpleNamespace(data={
+                    'entity_id':pool.entity_id,'new_state':partial_pool}))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        self.assertTrue(await runtime.async_takeover(SimpleNamespace(
+            request_id='normal-partial-transfer',action='takeover',devices=(1,2))))
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertEqual(len(hass.calls),2)
+
+    async def test_pool_reverts_to_manual_during_release_blocks_second_switch(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='on'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=[]
+        pool.attributes['manual_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='off'
+            pool.attributes['manual_batteries'].remove(name)
+            pool.attributes['automatic_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+            if n==1:
+                reverted_pool=hass.states.state(pool.entity_id,'charging',NOW,{
+                    'automatic_batteries':[],
+                    'manual_batteries':['Marstek Venus 1','Marstek Venus 2']})
+                runtime.handle_state_change(SimpleNamespace(data={
+                    'entity_id':pool.entity_id,'new_state':reverted_pool}))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        runtime.handover.phase='held'
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_return(SimpleNamespace(
+                request_id='revert-to-manual-during-release',action='return',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(len(hass.calls),1)
+
+    async def test_normal_partial_pool_transition_during_release_allows_unowned(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='on'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=[]
+        pool.attributes['manual_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='off'
+            pool.attributes['manual_batteries'].remove(name)
+            pool.attributes['automatic_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+            if n==1:
+                partial_pool=hass.states.state(pool.entity_id,'charging',NOW,{
+                    'automatic_batteries':['Marstek Venus 1'],
+                    'manual_batteries':['Marstek Venus 2']})
+                runtime.handle_state_change(SimpleNamespace(data={
+                    'entity_id':pool.entity_id,'new_state':partial_pool}))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        runtime.handover.phase='held'
+        self.assertTrue(await runtime.async_return(SimpleNamespace(
+            request_id='normal-partial-release',action='return',devices=(1,2))))
+        self.assertEqual(runtime.handover.phase,'unowned')
+        self.assertEqual(len(hass.calls),2)
+
+    async def test_runtime_grant_only_after_joint_stop_and_explicit_return(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status'].attributes
+        pool['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2'];pool['manual_batteries']=[]
+        originals=hass.async_call
+        async def switch_service(domain,service,data,blocking=False):
+            if domain=='switch':
+                self.assertTrue(blocking)
+                if service=='turn_off':
+                    self.assertEqual(runtime.authority.ownership,'manual')
+                    self.assertTrue(runtime.authority.inhibited)
+                n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+                hass.states.values[data['entity_id']].state='on' if service=='turn_on' else 'off'
+                (pool['manual_batteries'] if service=='turn_on' else pool['automatic_batteries']).append(name)
+                (pool['automatic_batteries'] if service=='turn_on' else pool['manual_batteries']).remove(name)
+                hass.calls.append((data['entity_id'],service))
+            else:await originals(domain,service,data,blocking)
+        hass.services=SimpleNamespace(async_call=switch_service)
+        approved=SimpleNamespace(request_id='approval-2',action='takeover',devices=(1,2))
+        async def zero():
+            self.assertEqual(runtime.authority.ownership,'manual')
+            self.assertTrue(runtime.authority.inhibited)
+            return True  # synthetic physical proof, never production binding
+        b=replace(binding(hass),handover_authorize=lambda p,action:p.request_id in ('approval-2','approval-3') and p.action==action and p.devices==(1,2),
+                  handover_eligible=lambda:True, stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        self.assertTrue(await runtime.async_takeover(approved))
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+        self.assertTrue(await runtime.async_return(SimpleNamespace(request_id='approval-3',action='return',devices=(1,2))))
+        self.assertTrue(runtime.authority.inhibited)
+        self.assertEqual(runtime.authority.ownership,'manual')
+        self.assertEqual(pool['automatic_batteries'],['Marstek Venus 1','Marstek Venus 2'])
+
     async def test_default_ha_runtime_never_reads_or_writes(self):
         hass = HA(NOW)
         runtime = GateRuntime(hass)
