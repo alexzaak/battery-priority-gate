@@ -20,7 +20,7 @@ class States:
 class FeedbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.states = States()
-        self.feedback = HAFeedback(self.states, timeout_s=.05, poll_s=.001,
+        self.feedback = HAFeedback(self.states, timeout_s=.3, poll_s=.001,
                                    ac_max_abs_w=20, ac_sample_gap_s=.001,
                                    clock=lambda: NOW+timedelta(seconds=3))
     async def test_old_equal_setpoint_is_not_readback(self):

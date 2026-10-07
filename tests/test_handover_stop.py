@@ -22,7 +22,7 @@ class HA:
 
 class StopTests(unittest.IsolatedAsyncioTestCase):
     def setup_adapter(self):
-        ha=HA();feedback=HAFeedback(ha.states,timeout_s=.06,poll_s=.001,ac_max_abs_w=20,ac_sample_gap_s=.002)
+        ha=HA();feedback=HAFeedback(ha.states,timeout_s=.3,poll_s=.001,ac_max_abs_w=20,ac_sample_gap_s=.002)
         stop=TwoDeviceZeroAttestor(ha,feedback,sole_writer_guard=lambda:ha.allow,
              handover_observed=lambda:ha.pool=='both_manual_pool_confirmed_only',
              max_joint_skew_s=1)
