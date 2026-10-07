@@ -126,6 +126,12 @@ class HandoverCoordinator:
                 self.grant()  # only after full joint transition AND independent stop callback
                 self.phase='held'
                 return True
+            except asyncio.CancelledError:
+                # A cancelled HA call may already have changed the device.
+                # Never issue compensating switches or grant from this state.
+                self.revoke()
+                self._fault('takeover_cancelled')
+                raise
             except Exception as exc:
                 self.revoke()
                 if stop_started:
@@ -166,6 +172,10 @@ class HandoverCoordinator:
                 await self._await_observation('automatic_pool')
                 self.phase='unowned'
                 return True
+            except asyncio.CancelledError:
+                self.revoke()
+                self._fault('return_cancelled')
+                raise
             except Exception as exc:
                 self._fault('return_unconfirmed')
                 raise HandoverIncomplete('return unconfirmed; no gate authority') from exc

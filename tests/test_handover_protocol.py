@@ -147,6 +147,78 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.protocol.zero_and_attest=stuck
         with self.assertRaises(HandoverIncomplete):await self.protocol.takeover(self.permit('takeover'))
         self.assertNotIn('grant',self.events)
+    async def test_cancelled_takeover_after_first_switch_requires_recovery(self):
+        started=asyncio.Event()
+        old=self.ha.async_call
+        async def wait_on_second(domain,service,data,blocking=False):
+            if service=='turn_on' and 'venus_2' in data['entity_id']:
+                started.set()
+                await asyncio.Future()
+            return await old(domain,service,data,blocking)
+        self.ha.services=SimpleNamespace(async_call=wait_on_second)
+        task=asyncio.create_task(self.protocol.takeover(self.permit('takeover')))
+        await asyncio.wait_for(started.wait(),1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await task
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(self.events[-1],'fault:takeover_cancelled')
+        self.assertNotIn('grant',self.events)
+        self.assertEqual(self.ha.calls,[('turn_on','switch.marstek_venus_1_battery_manual_mode')])
+        self.assertEqual(inspect_handover(self.ha.states).reason,'pool_or_switch_mismatch')
+
+    async def test_cancelled_during_stop_never_rolls_back_to_automatic(self):
+        started=asyncio.Event()
+        async def stop_waits():
+            started.set()
+            await asyncio.Future()
+        self.protocol.zero_and_attest=stop_waits
+        task=asyncio.create_task(self.protocol.takeover(self.permit('takeover')))
+        await asyncio.wait_for(started.wait(),1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await task
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(self.events[-1],'fault:takeover_cancelled')
+        self.assertNotIn('grant',self.events)
+        self.assertEqual(len(self.ha.calls),2)
+        self.assertEqual(inspect_handover(self.ha.states).reason,'both_manual_pool_confirmed_only')
+
+    async def test_cancelled_return_after_first_switch_requires_recovery(self):
+        await self.protocol.takeover(self.permit('takeover'))
+        started=asyncio.Event()
+        old=self.ha.async_call
+        async def wait_on_second(domain,service,data,blocking=False):
+            if service=='turn_off' and 'venus_2' in data['entity_id']:
+                started.set()
+                await asyncio.Future()
+            return await old(domain,service,data,blocking)
+        self.ha.services=SimpleNamespace(async_call=wait_on_second)
+        task=asyncio.create_task(self.protocol.return_to_auto(self.permit('return')))
+        await asyncio.wait_for(started.wait(),1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await task
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(self.events[-1],'fault:return_cancelled')
+        self.assertEqual(self.events.count('revoke'),3)
+        self.assertEqual(self.events.count('grant'),1)
+        self.assertEqual(len(self.ha.calls),3)
+        self.assertEqual(inspect_handover(self.ha.states).reason,'pool_or_switch_mismatch')
+
+    async def test_cancelled_return_during_stop_never_switches_pool(self):
+        await self.protocol.takeover(self.permit('takeover'))
+        started=asyncio.Event()
+        async def stop_waits():
+            started.set()
+            await asyncio.Future()
+        self.protocol.zero_and_attest=stop_waits
+        task=asyncio.create_task(self.protocol.return_to_auto(self.permit('return')))
+        await asyncio.wait_for(started.wait(),1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await task
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(self.events[-1],'fault:return_cancelled')
+        self.assertEqual(len(self.ha.calls),2)
+        self.assertEqual(inspect_handover(self.ha.states).reason,'both_manual_pool_confirmed_only')
+
     async def test_manual_invalidation_mid_handover_prevents_second_switch_and_grant(self):
         old=self.ha.async_call
         async def revoke_after_first(domain,service,data,blocking=False):
