@@ -5,7 +5,7 @@
 **SENEC–Marstek Gate** is designed to coordinate two Marstek Venus batteries with an autonomous SENEC storage system through Home Assistant. It aims to prevent opposing battery flows, use verified PV surplus for charging, and share a bounded grid-power budget between the Venus devices—without overriding manual control or taking over SENEC.
 
 > [!IMPORTANT]
-> **Product direction, not a claim of current live control.** The features and operating flow below describe the completed product. The released `main` integration (v0.5.2) is diagnostic-only: its HA control loop is inactive, `production_ready=False`, and it cannot command the batteries. Do not enable battery control on the strength of this README. See [Current development status](#current-development-status) and [INSTALL.md](INSTALL.md).
+> **Product direction, not a claim of current live control.** The features and operating flow below describe the completed product. The released `main` integration (v0.5.2) is diagnostic-only: its HA control loop is inactive, `production_ready=False`, and it cannot command the batteries. Do not enable battery control on the strength of this README. See [Current development status](#current-development-status).
 
 ## Key features
 
@@ -28,7 +28,7 @@ The [vision](VISION.md) explains the architecture and acceptance gates. No savin
 | SENEC | Read-only battery power, Enfluri grid power, and solar generation entities from the actual installation. SENEC remains under its own controller. |
 | Marstek | **Two** Venus devices with battery power and SoC entities, Manual-mode switches, and separate AC power/readback entities. The exact hardware and control interface must be validated before live use. |
 | Omnibattery | The existing integration's two-device pool status, plus verified separation of its writing authority from the gate's. |
-| Safety inputs | Manual-priority helpers, maintenance state/automation, source freshness and measurement-point evidence, device limits, and independently checked stop feedback. See [INSTALL.md](INSTALL.md) for the current HA state. |
+| Safety inputs | Manual-priority helpers, maintenance state/automation, source freshness and measurement-point evidence, device limits, and independently checked stop feedback. These are not validated for active operation in the current release. |
 
 The agreed source IDs are `sensor.senec_enfluri_net_power_total`, `sensor.senec_battery_state_power`, `sensor.senec_solar_generated_power`, `sensor.marstek_venus_{1,2}_battery_power`, and `sensor.marstek_venus_{1,2}_battery_soc` (the braces stand for one entity per device). `sensor.marstek_venus_{1,2}_ac_power` is a **separate** stop-check signal, not a battery-direction input. `sensor.senec_house_power` is excluded from control, accounting, diagnostics, and plausibility checks. IDs, units, sign, measurement point, and freshness must match the actual installation; similar names are not sufficient.
 
@@ -40,8 +40,9 @@ The agreed source IDs are `sensor.senec_enfluri_net_power_total`, `sensor.senec_
 2. In HACS, add [`alexzaak/battery-priority-gate`](https://github.com/alexzaak/battery-priority-gate) as a custom **Integration** repository. Install a published, reviewed release; do not install an unreviewed feature branch as a control upgrade.
 3. Restart Home Assistant. Keep an existing gate config entry, or add **SENEC–Marstek Gate** once under **Settings → Devices & services → Add integration** if none exists.
 4. Confirm `sensor.senec_marstek_gate_status` is `inaktiv`, `production_ready=False`, and `loop_state=inactive`; check the loaded `runtime_version`, logs, and unchanged Venus/Omnibattery states. A download or manifest version does not prove that HA loaded new Python code.
+5. If verification fails, restore the saved integration directory, restart Home Assistant, and read back the entry, status, logs, and device states again. Do not create a second config entry or experiment with battery controls to troubleshoot installation.
 
-**Active operation is not available in this release.** The completed product will require separately approved two-device ownership transfer, validated settings and physical stop evidence before activation. Do not toggle Manual modes, setpoints, or automations to simulate setup. For detailed upgrade verification and rollback, use [INSTALL.md](INSTALL.md).
+**Active operation is not available in this release.** The completed product will require separately approved two-device ownership transfer, validated settings and physical stop evidence before activation. Do not toggle Manual modes, setpoints, or automations to simulate setup.
 
 ## Current development status
 

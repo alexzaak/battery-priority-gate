@@ -4,7 +4,7 @@
 
 Dieses Projekt soll in Home Assistant eine nachvollziehbare, sichere Koordination zwischen dem **autonom bleibenden SENEC-Speicher** und **beiden Marstek Venus** ermöglichen. Ziel ist, gegensinniges Laden und Entladen zu vermeiden und – nur bei nachweislich geeigneter Datenlage und Hoheit – die beiden Venus innerhalb bestätigter Grenzen am Netzfluss und einem belegten PV-Überschuss auszurichten. Versorgungssicherheit, Geräteautonomie und ein eindeutiger manueller Rückweg haben Vorrang vor Optimierung. Das Gate ist kein Ersatz für SENEC-, Marstek- oder Omnibattery-Schutzfunktionen.
 
-Das Projekt verwendet ausschließlich Home Assistant als Integrations- und Bedienebene. Der bestehende, installierbare Stand auf `main` (v0.5.2) ist **inaktiv**: keine produktiv attestierte `ControllerBinding`, keine Live-Steuerung und `production_ready=False`. Die auf einem separaten Feature-Branch entwickelte gemeinsame Übergabe/Rückgabe ist noch keine freigegebene Funktion. Diese Vision beschreibt Ziele, **nicht** den bereits erreichten oder zur Aktivierung freigegebenen Funktionsumfang; für den aktuellen Stand siehe [README.md](README.md) und [INSTALL.md](INSTALL.md).
+Das Projekt verwendet ausschließlich Home Assistant als Integrations- und Bedienebene. Der bestehende, installierbare Stand auf `main` (v0.5.2) ist **inaktiv**: keine produktiv attestierte `ControllerBinding`, keine Live-Steuerung und `production_ready=False`. Die auf einem separaten Feature-Branch entwickelte gemeinsame Übergabe/Rückgabe ist noch keine freigegebene Funktion. Diese Vision beschreibt Ziele, **nicht** den bereits erreichten oder zur Aktivierung freigegebenen Funktionsumfang; für den aktuellen Stand siehe [README.md](README.md).
 
 ## Leitplanken
 
