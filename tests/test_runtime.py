@@ -11,7 +11,7 @@ from custom_components.senec_marstek_gate.authority import Authority
 from custom_components.senec_marstek_gate.controller import Evidence, Limits
 from custom_components.senec_marstek_gate.quality import REQUIRED
 from custom_components.senec_marstek_gate.runtime import GateRuntime, ControllerBinding
-from custom_components.senec_marstek_gate.handover_protocol import HandoverDenied
+from custom_components.senec_marstek_gate.handover_protocol import HandoverDenied, HandoverIncomplete
 
 NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
 LIMITS = Limits(100, 80, 30, {1: 250, 2: 250}, {1: 250, 2: 250}, 10, 14)
@@ -225,6 +225,43 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.handover.phase,'held')
         self.assertEqual(runtime.authority.ownership,'gate_beide')
         self.assertFalse(runtime.authority.inhibited)
+
+    async def test_transient_pool_loss_during_stop_prevents_grant_even_if_restored(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        original=hass.async_call
+        async def switch_service(domain,service,data,blocking=False):
+            if domain=='switch':
+                n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+                hass.states.values[data['entity_id']].state='on'
+                pool.attributes['automatic_batteries'].remove(name)
+                pool.attributes['manual_batteries'].append(name)
+                hass.calls.append((data['entity_id'],service))
+            else:await original(domain,service,data,blocking)
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():
+            pool.attributes['manual_batteries'].remove('Marstek Venus 2')
+            pool.attributes['automatic_batteries'].append('Marstek Venus 2')
+            runtime.handle_state_change(SimpleNamespace(data={
+                'entity_id':pool.entity_id,'new_state':pool}))
+            pool.attributes['automatic_batteries'].remove('Marstek Venus 2')
+            pool.attributes['manual_batteries'].append('Marstek Venus 2')
+            return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_takeover(SimpleNamespace(
+                request_id='transient-loss',action='takeover',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(runtime.authority.ownership,'manual')
+        self.assertTrue(runtime.authority.inhibited)
+        self.assertEqual(len(hass.calls),2)
 
     async def test_runtime_grant_only_after_joint_stop_and_explicit_return(self):
         hass=HA(NOW)

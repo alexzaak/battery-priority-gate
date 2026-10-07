@@ -125,7 +125,8 @@ class GateRuntime:
         if eid in ('sensor.omnibattery_integration_status',
                    'automation.marstek_wartung_beide_manuell_und_0_w'):
             if not inspect_handover(self.hass.states).handover_observed:
-                if self.handover is not None and self.handover.phase=='held':
+                if (self.handover is not None and
+                        (self.handover.phase=='held' or self.handover.stop_in_progress)):
                     self._invalidate_lease()
                 self.authority = advance(self.authority, 'restart')
                 self.cycle = CycleState()

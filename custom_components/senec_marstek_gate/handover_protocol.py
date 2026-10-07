@@ -43,6 +43,7 @@ class HandoverCoordinator:
         self.phase='unowned'
         self.used_requests=set()
         self._cancelled=False
+        self.stop_in_progress=False
         self._lock=asyncio.Lock()
 
     def invalidate(self):
@@ -110,6 +111,27 @@ class HandoverCoordinator:
             raise
         if self._cancelled:raise HandoverIncomplete('handover revoked during service call')
 
+    def _partial_pool(self, *, first_manual):
+        """Require an exact, unambiguous joint observation between switch calls."""
+        try:
+            one=self.hass.states.get(_SWITCH[1])
+            two=self.hass.states.get(_SWITCH[2])
+            pool=self.hass.states.get('sensor.omnibattery_integration_status')
+            if (one is None or one.entity_id!=_SWITCH[1] or two is None or
+                    two.entity_id!=_SWITCH[2] or pool is None or
+                    pool.entity_id!='sensor.omnibattery_integration_status' or
+                    pool.state in ('unknown','unavailable',None)):
+                return False
+            auto=pool.attributes['automatic_batteries']
+            manual=pool.attributes['manual_batteries']
+            if first_manual:
+                return (one.state=='on' and two.state=='off' and
+                        manual==['Marstek Venus 1'] and auto==['Marstek Venus 2'])
+            return (one.state=='off' and two.state=='on' and
+                    auto==['Marstek Venus 1'] and manual==['Marstek Venus 2'])
+        except (AttributeError, KeyError, TypeError):
+            return False
+
     async def _await_observation(self, expected):
         deadline=asyncio.get_running_loop().time()+self.timeout_s
         while True:
@@ -121,9 +143,25 @@ class HandoverCoordinator:
 
     async def _stop(self):
         if not self._eligible():raise HandoverIncomplete('no exclusive preflight before stop')
-        if await asyncio.wait_for(self.zero_and_attest(),timeout=self.timeout_s) is not True:
-            raise HandoverIncomplete('two-device physical stop not attested')
-        if not self._eligible():raise HandoverIncomplete('eligibility lost after stop')
+        self.stop_in_progress=True
+        try:
+            task=asyncio.create_task(self.zero_and_attest())
+            try:
+                done,_=await asyncio.wait({task},timeout=self.timeout_s)
+                if not done:
+                    self._cancelled=True  # never accept a late stop acknowledgement
+                    task.cancel()
+                    task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+                    raise HandoverIncomplete('two-device stop deadline exceeded')
+                if await task is not True:
+                    raise HandoverIncomplete('two-device physical stop not attested')
+            except asyncio.CancelledError:
+                task.cancel()
+                task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+                raise
+            if not self._eligible():raise HandoverIncomplete('eligibility lost after stop')
+        finally:
+            self.stop_in_progress=False
 
     async def takeover(self, permit):
         async with self._lock:
@@ -136,6 +174,8 @@ class HandoverCoordinator:
             stop_started=False
             try:
                 for n in (1,2):
+                    if n==2 and not self._partial_pool(first_manual=True):
+                        raise HandoverIncomplete('joint pool changed during takeover')
                     await self._switch(n,'turn_on')
                 await self._await_observation('both_manual_pool_confirmed_only')
                 stop_started=True
@@ -173,6 +213,8 @@ class HandoverCoordinator:
                     raise HandoverIncomplete('manual pool no longer unambiguous')
                 await self._stop()
                 for n in (1,2):
+                    if n==2 and not self._partial_pool(first_manual=False):
+                        raise HandoverIncomplete('joint pool changed during return')
                     await self._switch(n,'turn_off')
                 await self._await_observation('automatic_pool')
                 self.phase='unowned'
