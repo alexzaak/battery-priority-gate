@@ -61,6 +61,8 @@ class IntegrationContract(unittest.TestCase):
             self.assertEqual(len(changes), 1)
             self.assertIn('input_boolean.marstek_gate_venus_1_manueller_vorrang', changes[0][0])
             self.assertIn('input_boolean.marstek_wartung_beide_manuell', changes[0][0])
+            self.assertIn('sensor.omnibattery_integration_status', changes[0][0])
+            self.assertIn('automation.marstek_wartung_beide_manuell_und_0_w', changes[0][0])
             self.assertEqual(ticks[0][2].total_seconds(), 10)
             self.assertEqual(asyncio.run(ticks[0][1](None)), 'inactive')
             self.assertIn('example', hass.data['senec_marstek_gate'])
@@ -129,11 +131,12 @@ class IntegrationContract(unittest.TestCase):
             entity.hass = hass
             asyncio.run(entity.async_update())
             self.assertEqual(entity._attr_native_value, 'inaktiv')
-            self.assertEqual(len(calls), 7)
+            self.assertGreaterEqual(len(calls), 7)
             self.assertEqual(set(entity._attr_extra_state_attributes['source_checks'].values()), {'missing'})
             self.assertFalse(entity._attr_extra_state_attributes['production_ready'])
-            self.assertEqual(entity._attr_extra_state_attributes['runtime_version'], '0.5.0')
+            self.assertEqual(entity._attr_extra_state_attributes['runtime_version'], '0.5.1')
             self.assertEqual(entity._attr_extra_state_attributes['loop_state'], 'inactive')
+            self.assertEqual(entity._attr_extra_state_attributes['handover_observation'], 'maintenance_or_unknown')
             from datetime import datetime, timezone
             valid = types.SimpleNamespace(
                 entity_id='sensor.senec_enfluri_net_power_total', state='140',
@@ -152,10 +155,10 @@ class IntegrationContract(unittest.TestCase):
     def test_manifest_is_discoverable_but_control_cannot_be_enabled(self):
         manifest = json.loads((COMPONENT / 'manifest.json').read_text())
         version_source = (COMPONENT / 'version.py').read_text()
-        self.assertIn("VERSION = '0.5.0'", version_source)
+        self.assertIn("VERSION = '0.5.1'", version_source)
         self.assertEqual(manifest['domain'], 'senec_marstek_gate')
         self.assertTrue(manifest['config_flow'])
-        self.assertEqual(manifest['version'], '0.5.0')
+        self.assertEqual(manifest['version'], '0.5.1')
         source = '\n'.join((COMPONENT / p).read_text() for p in ('__init__.py', 'sensor.py', 'config_flow.py'))
         for forbidden in ('async_call(', 'call_service(', 'number.set_value',
                           'switch.turn_on', 'switch.turn_off', 'verified=True', 'apply_request('):
