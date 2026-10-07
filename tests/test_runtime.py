@@ -160,6 +160,72 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls,['invalidate'])
         self.assertEqual(hass.calls,[])
 
+    async def test_unapproved_return_does_not_revoke_held_gate_or_consume_lease(self):
+        hass=HA(NOW)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:False,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b,Authority('gate_beide','enfluri',False))
+        runtime.handover.phase='held'  # synthetic lease; no actors touched
+        denied=SimpleNamespace(request_id='unauthorized',action='return',devices=(1,2))
+        with self.assertRaises(HandoverDenied):await runtime.async_return(denied)
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+        self.assertEqual(runtime.handover.used_requests,set())
+        self.assertEqual(hass.calls,[])
+
+    async def test_replayed_return_does_not_revoke_held_gate(self):
+        hass=HA(NOW)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b,Authority('gate_beide','enfluri',False))
+        runtime.handover.phase='held'
+        runtime.handover.used_requests.add('already-consumed')
+        replay=SimpleNamespace(request_id='already-consumed',action='return',devices=(1,2))
+        with self.assertRaises(HandoverDenied):await runtime.async_return(replay)
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+        self.assertEqual(hass.calls,[])
+
+    async def test_invalid_return_queued_behind_tick_does_not_revoke_live_guard(self):
+        hass=HA(NOW)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:False,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b,Authority('gate_beide','enfluri',False))
+        runtime.handover.phase='held'
+        self.assertEqual(await runtime.async_tick(NOW),'settling')
+        hass.states.advance(NOW+timedelta(seconds=10))
+        entered=asyncio.Event();release=asyncio.Event()
+        original=hass.async_call
+        async def blocked_number(domain,service,data,blocking=False):
+            entered.set()
+            await release.wait()
+            await original(domain,service,data,blocking)
+        hass.services=SimpleNamespace(async_call=blocked_number)
+        tick=asyncio.create_task(runtime.async_tick(hass.states.now))
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            denied=SimpleNamespace(request_id='invalid-parallel',action='return',devices=(1,2))
+            rejection=asyncio.create_task(runtime.async_return(denied))
+            await asyncio.sleep(0)
+            self.assertFalse(rejection.done())
+            self.assertEqual(runtime.authority.ownership,'gate_beide')
+            self.assertTrue(runtime._live_guard(1))
+        finally:
+            release.set()
+        await asyncio.wait_for(tick,1)
+        with self.assertRaises(HandoverDenied):await rejection
+        self.assertEqual(runtime.handover.phase,'held')
+        self.assertEqual(runtime.authority.ownership,'gate_beide')
+        self.assertFalse(runtime.authority.inhibited)
+
     async def test_runtime_grant_only_after_joint_stop_and_explicit_return(self):
         hass=HA(NOW)
         for n in (1,2):
@@ -170,6 +236,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         async def switch_service(domain,service,data,blocking=False):
             if domain=='switch':
                 self.assertTrue(blocking)
+                if service=='turn_off':
+                    self.assertEqual(runtime.authority.ownership,'manual')
+                    self.assertTrue(runtime.authority.inhibited)
                 n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
                 hass.states.values[data['entity_id']].state='on' if service=='turn_on' else 'off'
                 (pool['manual_batteries'] if service=='turn_on' else pool['automatic_batteries']).append(name)
@@ -178,7 +247,10 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             else:await originals(domain,service,data,blocking)
         hass.services=SimpleNamespace(async_call=switch_service)
         approved=SimpleNamespace(request_id='approval-2',action='takeover',devices=(1,2))
-        async def zero():return True  # synthetic physical proof, never production binding
+        async def zero():
+            self.assertEqual(runtime.authority.ownership,'manual')
+            self.assertTrue(runtime.authority.inhibited)
+            return True  # synthetic physical proof, never production binding
         b=replace(binding(hass),handover_authorize=lambda p,action:p.request_id in ('approval-2','approval-3') and p.action==action and p.devices==(1,2),
                   handover_eligible=lambda:True, stop_and_attest=zero,
                   handover_fault=lambda reason:None)

@@ -94,10 +94,11 @@ class GateRuntime:
     async def async_return(self, permit):
         if self._closed or self.handover is None:
             raise HandoverDenied('no certified HA handover binding installed')
-        self._revoke_handover()  # in-flight tick loses guard even before lock acquired
         async with self._lock:
             if self._closed or self.handover is None:
                 raise HandoverDenied('handover binding unloaded while waiting')
+            # Coordinator validates the one-use permit under its own lock and
+            # revokes gate rights before its first stop or switch operation.
             return await self.handover.return_to_auto(permit)
 
     def close(self):
