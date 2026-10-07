@@ -132,8 +132,16 @@ class GateRuntime:
             lost=(not inspect_handover(incoming_states).handover_observed or
                   not inspect_handover(self.hass.states).handover_observed)
             if lost:
-                if (self.handover is not None and
-                        (self.handover.phase=='held' or self.handover.stop_in_progress)):
+                handover=self.handover
+                automation_lost=(eid=='automation.marstek_wartung_beide_manuell_und_0_w' and
+                                 (state!='on' or self._flag(eid)!='on'))
+                pool_unknown=(eid=='sensor.omnibattery_integration_status' and
+                              inspect_handover(incoming_states).reason in
+                              ('omnibattery_unknown','pool_unknown','pool_ambiguous'))
+                if (handover is not None and
+                        (handover.phase=='held' or handover.stop_in_progress or
+                         (handover.phase in ('transferring','releasing') and
+                          (automation_lost or pool_unknown)))):
                     self._invalidate_lease()
                 self.authority = advance(self.authority, 'restart')
                 self.cycle = CycleState()

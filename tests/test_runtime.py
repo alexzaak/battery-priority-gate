@@ -307,6 +307,36 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.handover.phase,'recovery_required')
         self.assertEqual(runtime.authority.ownership,'manual')
 
+    async def test_delayed_automation_loss_during_transfer_blocks_second_switch(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status']
+        pool.attributes['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool.attributes['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            n=int(data['entity_id'].split('_venus_')[1].split('_')[0]);name=f'Marstek Venus {n}'
+            hass.states.values[data['entity_id']].state='on'
+            pool.attributes['automatic_batteries'].remove(name)
+            pool.attributes['manual_batteries'].append(name)
+            hass.calls.append((data['entity_id'],service))
+            if n==1:
+                eid='automation.marstek_wartung_beide_manuell_und_0_w'
+                runtime.handle_state_change(SimpleNamespace(data={'entity_id':eid,
+                    'new_state':hass.states.state(eid,'off',NOW)}))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        with self.assertRaises(HandoverIncomplete):
+            await runtime.async_takeover(SimpleNamespace(
+                request_id='early-automation-loss',action='takeover',devices=(1,2)))
+        self.assertEqual(runtime.handover.phase,'recovery_required')
+        self.assertEqual(runtime.authority.ownership,'manual')
+        self.assertEqual(len(hass.calls),1)
+
     async def test_runtime_grant_only_after_joint_stop_and_explicit_return(self):
         hass=HA(NOW)
         for n in (1,2):
