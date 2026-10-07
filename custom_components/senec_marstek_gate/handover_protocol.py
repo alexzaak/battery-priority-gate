@@ -99,7 +99,11 @@ class HandoverCoordinator:
                 task.cancel()
                 task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
                 raise SwitchUnconfirmed('switch service deadline exceeded; outcome unknown')
-            await task
+            try:
+                await task
+            except Exception as exc:
+                # A service exception is not proof the device stayed unchanged.
+                raise SwitchUnconfirmed('switch service failed; outcome unknown') from exc
         except asyncio.CancelledError:
             task.cancel()
             task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
@@ -129,11 +133,9 @@ class HandoverCoordinator:
                 raise HandoverDenied('both devices not in Omnibattery automatic pool')
             self.revoke()  # before the first switch call
             self.phase='transferring'
-            changed=[]
             stop_started=False
             try:
                 for n in (1,2):
-                    changed.append(n)
                     await self._switch(n,'turn_on')
                 await self._await_observation('both_manual_pool_confirmed_only')
                 stop_started=True
@@ -155,28 +157,10 @@ class HandoverCoordinator:
                 raise HandoverIncomplete('switch outcome unknown; manual recovery required') from exc
             except Exception as exc:
                 self.revoke()
-                if stop_started:
-                    # A failed/partial zero sequence cannot be compensated by
-                    # silently returning to automatic control.
-                    self._fault('stop_unconfirmed')
-                    raise HandoverIncomplete('stop unconfirmed; manual recovery required') from exc
-                # Return only switches changed by this transaction; unknown human
-                # takeover or lost writer preflight forbids compensating writes.
-                try:
-                    if not self._eligible():raise HandoverIncomplete('rollback interlock lost')
-                    for n in reversed(changed):
-                        switch=self.hass.states.get(_SWITCH[n])
-                        if switch is None or switch.entity_id!=_SWITCH[n]:
-                            raise HandoverIncomplete('unknown switch state during rollback')
-                        if switch.state=='on':
-                            await self._switch(n,'turn_off')
-                        elif switch.state!='off':
-                            raise HandoverIncomplete('unverifiable switch state during rollback')
-                    await self._await_observation('automatic_pool')
-                    self.phase='unowned'
-                except Exception:
-                    self._fault('rollback_unconfirmed')
-                raise HandoverIncomplete('takeover not confirmed; gate never granted') from exc
+                # After a service attempt, pool states can lag or disagree with
+                # physical modes. Never compensate an ambiguous partial transfer.
+                self._fault('stop_unconfirmed' if stop_started else 'takeover_unconfirmed')
+                raise HandoverIncomplete('takeover unconfirmed; manual recovery required') from exc
 
     async def return_to_auto(self, permit):
         async with self._lock:

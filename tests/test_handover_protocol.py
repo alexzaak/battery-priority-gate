@@ -75,13 +75,15 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(HandoverDenied):await self.protocol.takeover(approval)
                 self.assertEqual(self.ha.calls,[])
                 self.assertEqual(self.protocol.phase,'unowned')
-    async def test_partial_switch_failure_rolls_back_without_grant(self):
+    async def test_partial_switch_failure_requires_recovery_without_grant_or_compensation(self):
         self.ha.failed_at=2
         with self.assertRaises(HandoverIncomplete):await self.protocol.takeover(self.permit('takeover'))
         self.assertNotIn('grant',self.events)
-        self.assertEqual(self.protocol.phase,'unowned')
-        self.assertEqual(inspect_handover(self.ha.states).reason,'automatic_pool')
-    async def test_service_mutates_second_switch_then_raises_must_roll_back_both(self):
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(inspect_handover(self.ha.states).reason,'pool_or_switch_mismatch')
+        self.assertEqual(len(self.ha.calls),2)
+        self.assertIn('fault:switch_unconfirmed',self.events)
+    async def test_service_mutates_second_switch_then_raises_requires_manual_recovery(self):
         original=self.ha.async_call
         async def mutates_then_raises(domain,service,data,blocking=False):
             await original(domain,service,data,blocking)
@@ -89,10 +91,12 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError('ack lost after device changed')
         self.ha.services=SimpleNamespace(async_call=mutates_then_raises)
         with self.assertRaises(HandoverIncomplete):await self.protocol.takeover(self.permit('takeover'))
-        self.assertEqual(self.protocol.phase,'unowned')
-        self.assertEqual(inspect_handover(self.ha.states).reason,'automatic_pool')
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(inspect_handover(self.ha.states).reason,'both_manual_pool_confirmed_only')
+        self.assertEqual(len(self.ha.calls),2)
+        self.assertIn('fault:switch_unconfirmed',self.events)
         self.assertNotIn('grant',self.events)
-    async def test_failed_rollback_requires_manual_recovery(self):
+    async def test_service_failure_never_attempts_unsafe_compensation(self):
         old=self.ha.async_call
         async def fails_return(domain,service,data,blocking=False):
             if service=='turn_off':raise RuntimeError('return failed')
@@ -101,6 +105,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.ha.failed_at=2
         with self.assertRaises(HandoverIncomplete):await self.protocol.takeover(self.permit('takeover'))
         self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertTrue(all(service=='turn_on' for service,_ in self.ha.calls))
         self.assertNotIn('grant',self.events)
         with self.assertRaises(HandoverDenied):await self.protocol.takeover(self.permit('takeover'))
     async def test_zero_failure_leaves_manual_pool_for_explicit_recovery(self):
@@ -132,11 +137,13 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.ha.auto=[];self.ha.manual=['Marstek Venus 1','Marstek Venus 2']
         with self.assertRaises(HandoverDenied):await self.protocol.return_to_auto(self.permit('return'))
         self.assertEqual(self.ha.calls,[])
-    async def test_pool_stuck_in_transition_times_out_without_grant(self):
+    async def test_pool_stuck_in_transition_requires_manual_recovery_without_grant(self):
         self.ha.delay=True
         with self.assertRaises(HandoverIncomplete):await self.protocol.takeover(self.permit('takeover'))
         self.assertNotIn('grant',self.events)
-        self.assertEqual(self.protocol.phase,'unowned')
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(len(self.ha.calls),2)
+        self.assertTrue(all(service=='turn_on' for service,_ in self.ha.calls))
     async def test_replay_approval_is_rejected(self):
         await self.protocol.takeover(self.permit('takeover'))
         await self.protocol.return_to_auto(self.permit('return'))

@@ -67,6 +67,25 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
         task=asyncio.create_task(staggered())
         with self.assertRaises(StopBlocked):await stop()
         await task
+    async def test_first_device_resumes_after_both_dwell_confirmations(self):
+        ha,stop=self.setup_adapter()
+        original=stop.feedback.ac_idle
+        async def resumes_at_second_confirmation(device,after,guard):
+            result=await original(device,after,guard)
+            if device==2:
+                ha.put('sensor.marstek_venus_1_ac_power',250,ac=True)
+            return result
+        stop.feedback.ac_idle=resumes_at_second_confirmation
+        async def reports():
+            await asyncio.sleep(.004)
+            for n in (1,2):ha.put(f'sensor.marstek_venus_{n}_ac_power',0,ac=True)
+            await asyncio.sleep(.004)
+            for n in (1,2):ha.put(f'sensor.marstek_venus_{n}_ac_power',0,ac=True)
+        task=asyncio.create_task(reports())
+        with self.assertRaises(StopBlocked):await stop()
+        await task
+        self.assertEqual(len(ha.calls),4)
+
     async def test_loss_of_exclusive_guard_after_first_zero_aborts(self):
         ha,stop=self.setup_adapter()
         original=ha.async_call
