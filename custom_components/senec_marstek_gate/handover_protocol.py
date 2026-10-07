@@ -19,6 +19,9 @@ class HandoverDenied(RuntimeError):
 class HandoverIncomplete(RuntimeError):
     """Transition failed; recovery may require human intervention."""
 
+class SwitchUnconfirmed(HandoverIncomplete):
+    """Switch call exceeded its deadline; the device may still have changed."""
+
 class HandoverCoordinator:
     """Volatile joint lease: no grant after reboot and no one-device pilot."""
     def __init__(self, hass, *, authorize: Callable, eligible: Callable,
@@ -86,7 +89,21 @@ class HandoverCoordinator:
 
     async def _switch(self, n, service):
         if not self._eligible():raise HandoverIncomplete('lost preflight before switch')
-        await self.hass.services.async_call('switch',service,{'entity_id':_SWITCH[n]},blocking=True)
+        # Do not await cancellation cleanup of a driver that might ignore it:
+        # an unacknowledged service can still have acted on the device.
+        task=asyncio.create_task(self.hass.services.async_call(
+            'switch',service,{'entity_id':_SWITCH[n]},blocking=True))
+        try:
+            done,_=await asyncio.wait({task},timeout=self.timeout_s)
+            if not done:
+                task.cancel()
+                task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+                raise SwitchUnconfirmed('switch service deadline exceeded; outcome unknown')
+            await task
+        except asyncio.CancelledError:
+            task.cancel()
+            task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+            raise
         if self._cancelled:raise HandoverIncomplete('handover revoked during service call')
 
     async def _await_observation(self, expected):
@@ -132,6 +149,10 @@ class HandoverCoordinator:
                 self.revoke()
                 self._fault('takeover_cancelled')
                 raise
+            except SwitchUnconfirmed as exc:
+                self.revoke()
+                self._fault('switch_unconfirmed')
+                raise HandoverIncomplete('switch outcome unknown; manual recovery required') from exc
             except Exception as exc:
                 self.revoke()
                 if stop_started:

@@ -147,6 +147,80 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.protocol.zero_and_attest=stuck
         with self.assertRaises(HandoverIncomplete):await self.protocol.takeover(self.permit('takeover'))
         self.assertNotIn('grant',self.events)
+    async def test_hanging_first_switch_times_out_without_next_service(self):
+        started=asyncio.Event()
+        async def hangs(domain,service,data,blocking=False):
+            self.ha.calls.append((service,data['entity_id']))
+            started.set()
+            await asyncio.Future()
+        self.ha.services=SimpleNamespace(async_call=hangs)
+        with self.assertRaises(HandoverIncomplete):
+            await asyncio.wait_for(self.protocol.takeover(self.permit('takeover')),1)
+        self.assertTrue(started.is_set())
+        self.assertEqual(len(self.ha.calls),1)
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertNotIn('grant',self.events)
+        self.assertIn('fault:switch_unconfirmed',self.events)
+
+    async def test_second_switch_changes_then_hangs_no_automatic_rollback(self):
+        old=self.ha.async_call
+        async def changes_then_hangs(domain,service,data,blocking=False):
+            await old(domain,service,data,blocking)
+            if service=='turn_on' and 'venus_2' in data['entity_id']:
+                await asyncio.Future()
+        self.ha.services=SimpleNamespace(async_call=changes_then_hangs)
+        with self.assertRaises(HandoverIncomplete):
+            await asyncio.wait_for(self.protocol.takeover(self.permit('takeover')),1)
+        self.assertEqual(self.ha.calls,[('turn_on','switch.marstek_venus_1_battery_manual_mode'),
+                                       ('turn_on','switch.marstek_venus_2_battery_manual_mode')])
+        self.assertEqual(inspect_handover(self.ha.states).reason,'both_manual_pool_confirmed_only')
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertNotIn('grant',self.events)
+        self.assertIn('fault:switch_unconfirmed',self.events)
+
+    async def test_return_switch_timeout_leaves_recovery_and_no_next_switch(self):
+        await self.protocol.takeover(self.permit('takeover'))
+        old=self.ha.async_call
+        async def return_hangs(domain,service,data,blocking=False):
+            if service=='turn_off':
+                self.ha.calls.append((service,data['entity_id']))
+                await asyncio.Future()
+            return await old(domain,service,data,blocking)
+        self.ha.services=SimpleNamespace(async_call=return_hangs)
+        with self.assertRaises(HandoverIncomplete):
+            await asyncio.wait_for(self.protocol.return_to_auto(self.permit('return')),1)
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(self.events[-1],'fault:return_unconfirmed')
+        self.assertEqual(len(self.ha.calls),3)
+        self.assertEqual(inspect_handover(self.ha.states).reason,'both_manual_pool_confirmed_only')
+
+    async def test_switch_driver_ignores_cancellation_still_has_deadline(self):
+        release=asyncio.Event()
+        completed=asyncio.Event()
+        async def ignores_cancel(domain,service,data,blocking=False):
+            self.ha.calls.append((service,data['entity_id']))
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                await release.wait()
+                eid=data['entity_id']
+                self.ha.flags[eid]='on'
+                self.ha.auto.remove('Marstek Venus 1')
+                self.ha.manual.append('Marstek Venus 1')
+                completed.set()  # late device mutation must never grant ownership
+        self.ha.services=SimpleNamespace(async_call=ignores_cancel)
+        try:
+            with self.assertRaises(HandoverIncomplete):
+                await asyncio.wait_for(self.protocol.takeover(self.permit('takeover')), .5)
+            self.assertEqual(self.protocol.phase,'recovery_required')
+            self.assertEqual(len(self.ha.calls),1)
+        finally:
+            release.set()
+            await asyncio.wait_for(completed.wait(),1)
+        self.assertNotIn('grant',self.events)
+        self.assertEqual(self.protocol.phase,'recovery_required')
+        self.assertEqual(inspect_handover(self.ha.states).reason,'pool_or_switch_mismatch')
+
     async def test_cancelled_takeover_after_first_switch_requires_recovery(self):
         started=asyncio.Event()
         old=self.ha.async_call
