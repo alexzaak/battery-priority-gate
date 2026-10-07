@@ -8,7 +8,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Awaitable
 
 from .authority import Authority, advance
 from .controller import CycleState, Evidence, Limits, evaluate
@@ -32,8 +32,8 @@ class ControllerBinding:
     attested: Mapping[str, Mapping[str, bool]]
     evidence: Callable[[], Evidence]
     write_guard: Callable[[int], bool]
-    readback: Callable[[str, float], bool]
-    ac_idle: Callable[[int], bool]
+    readback: Callable[[str, float, datetime, Callable[[], bool]], bool | Awaitable[bool]]
+    ac_idle: Callable[[int, datetime, Callable[[], bool]], bool | Awaitable[bool]]
 
 
 class GateRuntime:

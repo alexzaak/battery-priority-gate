@@ -4,6 +4,8 @@ Its guard/readback/AC-idle callbacks must be bound to *fresh, independent*
 production checks before any future wiring. No such binding exists yet.
 """
 from math import isfinite
+from datetime import datetime, timezone
+from inspect import isawaitable
 from collections.abc import Mapping
 
 from .authority import Authority
@@ -65,14 +67,22 @@ async def apply_request(hass, device, request, authority, evidence, limits,
         _check(device, request, authority, evidence, limits)
         if guard() is not True:
             raise WriteBlocked('live ownership guard denied write')
+        issued_at = datetime.now(timezone.utc)
         await hass.services.async_call('number', 'set_value',
                                        {'entity_id': entity, 'value': value}, blocking=True)
-        if readback(entity, value) is not True:
+        observed = readback(entity, value, issued_at, guard)
+        if isawaitable(observed):
+            observed = await observed
+        if observed is not True:
             raise ReadbackFailed('setpoint readback missing')
 
     await set_verified(charge, 0)
     await set_verified(discharge, 0)
-    if ac_idle(device) is not True:
+    zeros_complete_at = datetime.now(timezone.utc)
+    observed = ac_idle(device, zeros_complete_at, guard)
+    if isawaitable(observed):
+        observed = await observed
+    if observed is not True:
         raise ReadbackFailed('independent AC-idle readback missing')
     if kind == 'charge_intent':
         await set_verified(charge, watts)

@@ -78,8 +78,8 @@ def binding(hass):
     proof = Evidence(True, True, {1: True, 2: False}, False, {1: True, 2: False})
     return ControllerBinding(LIMITS, {eid: 8 for eid in REQUIRED}, attested,
                              lambda: proof, lambda device: True,
-                             lambda eid, watts: float(hass.states.get(eid).state) == watts,
-                             lambda device: True)
+                             lambda eid, watts, after, guard: float(hass.states.get(eid).state) == watts,
+                             lambda device, after, guard: True)
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
