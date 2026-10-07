@@ -92,3 +92,17 @@ class HAFeedback:
                 return True
             return None
         return await self._poll(match,guard)
+
+    def joint_ac_idle_snapshot(self, after, max_skew_s):
+        """Validate both CURRENT AC samples together after individual dwell checks."""
+        if (not isinstance(after,datetime) or after.tzinfo is None or
+                type(max_skew_s) not in (int,float) or not isfinite(max_skew_s) or max_skew_s<=0):
+            raise FeedbackInvalid('invalid joint AC bounds')
+        samples=[self._sample(f'sensor.marstek_venus_{n}_ac_power',after=after,ac=True)
+                 for n in (1,2)]
+        if any(sample is None for sample in samples):
+            return False
+        first, second=samples
+        return (abs(first[1])<=self.ac_max_abs_w and
+                abs(second[1])<=self.ac_max_abs_w and
+                abs((first[0]-second[0]).total_seconds())<=max_skew_s)
