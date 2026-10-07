@@ -9,8 +9,6 @@ This file is a short entry point, not a second specification. Read only the link
 - `custom_components/senec_marstek_gate/`: implementation. Start with `__init__.py` and `runtime.py` for the HA entry point, `quality.py` and `classify.py` for inputs, `authority.py` and `handover.py` for ownership observation, `controller.py` for intents, and `writer.py` and `feedback.py` for guarded output and readback.
 - `tests/` and `.github/workflows/`: executable offline behavior and CI. Inspect the matching test before editing a module.
 
-The existing VISION document may contain German text; do not silently reinterpret or rewrite it as part of an unrelated code change. Write any new or substantively revised documentation in English.
-
 ## Non-negotiable boundaries
 
 - Home Assistant access is read-only by default. Do not turn on live battery control, switch device modes, set targets, change automations, install into HA, merge, or release without the relevant explicit authorization and safety evidence. An offline test pass or a green CI run is not hardware acceptance.
