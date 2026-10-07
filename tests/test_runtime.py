@@ -114,6 +114,52 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await runtime.async_takeover(SimpleNamespace(request_id='x', action='takeover', devices=(1,2)))
         self.assertEqual(hass.calls,[])
 
+    async def test_queued_takeover_cannot_grant_after_unload(self):
+        hass=HA(NOW)
+        for n in (1,2):
+            hass.states.values[f'switch.marstek_venus_{n}_battery_manual_mode'].state='off'
+        pool=hass.states.values['sensor.omnibattery_integration_status'].attributes
+        pool['automatic_batteries']=['Marstek Venus 1','Marstek Venus 2']
+        pool['manual_batteries']=[]
+        async def switch_service(domain,service,data,blocking=False):
+            hass.calls.append((domain,service,data['entity_id']))
+        hass.services=SimpleNamespace(async_call=switch_service)
+        async def zero():return True
+        b=replace(binding(hass),handover_authorize=lambda p,action:True,
+                  handover_eligible=lambda:True,stop_and_attest=zero,
+                  handover_fault=lambda reason:None)
+        runtime=GateRuntime(hass,b)
+        runtime.handover.timeout_s=.01
+        runtime.handover.poll_s=.001
+        await runtime._lock.acquire()
+        task=asyncio.create_task(runtime.async_takeover(SimpleNamespace(
+            request_id='new-request',action='takeover',devices=(1,2))))
+        await asyncio.sleep(0)
+        runtime.close()
+        runtime._lock.release()
+        with self.assertRaises(HandoverDenied):await task
+        self.assertEqual(hass.calls,[])
+        self.assertEqual(runtime.authority.ownership,'manual')
+
+    async def test_queued_return_cannot_call_coordinator_after_unload(self):
+        hass=HA(NOW)
+        runtime=GateRuntime(hass,binding(hass),Authority('gate_beide','enfluri',False))
+        calls=[]
+        class FakeHandover:
+            def invalidate(self):calls.append('invalidate')
+            async def return_to_auto(self,permit):
+                calls.append('return')
+                return True
+        runtime.handover=FakeHandover()
+        await runtime._lock.acquire()
+        task=asyncio.create_task(runtime.async_return(SimpleNamespace(request_id='return')))
+        await asyncio.sleep(0)
+        runtime.close()
+        runtime._lock.release()
+        with self.assertRaises(HandoverDenied):await task
+        self.assertEqual(calls,['invalidate'])
+        self.assertEqual(hass.calls,[])
+
     async def test_runtime_grant_only_after_joint_stop_and_explicit_return(self):
         hass=HA(NOW)
         for n in (1,2):
