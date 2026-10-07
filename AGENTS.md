@@ -6,11 +6,10 @@ This file is a short entry point, not a second specification. Read only the link
 
 - [VISION.md](VISION.md): long-term strategy, target architecture, non-goals, and acceptance gates. It describes goals, not a live-control authorization.
 - [README.md](README.md): currently documented feature set, assumptions, entity IDs, and offline test context.
-- [INSTALL.md](INSTALL.md): installed/inactive Home Assistant lifecycle, upgrade checks, and rollback boundaries.
 - `custom_components/senec_marstek_gate/`: implementation. Start with `__init__.py` and `runtime.py` for the HA entry point, `quality.py` and `classify.py` for inputs, `authority.py` and `handover.py` for ownership observation, `controller.py` for intents, and `writer.py` and `feedback.py` for guarded output and readback.
 - `tests/` and `.github/workflows/`: executable offline behavior and CI. Inspect the matching test before editing a module.
 
-The existing README, INSTALL, and VISION documents may contain German text; do not silently reinterpret or rewrite them as part of an unrelated code change. Write any new or substantively revised documentation in English.
+The existing VISION document may contain German text; do not silently reinterpret or rewrite it as part of an unrelated code change. Write any new or substantively revised documentation in English.
 
 ## Non-negotiable boundaries
 
@@ -25,4 +24,4 @@ The existing README, INSTALL, and VISION documents may contain German text; do n
 1. Identify the affected layer using the links above; read its current implementation, related tests, and any active PR notes. Do not assume a feature branch is already merged.
 2. Add a failing offline regression for behavior changes, especially cancellation, late HA service effects, event races, unload, manual override, and partial two-device transitions. Preserve the safety boundaries above.
 3. Run `python3 -m unittest discover -s tests -q`, `python3 -m compileall -q custom_components/senec_marstek_gate tests`, and `git diff --check`. For a release candidate also run `python3 scripts/check_release_version.py vX.Y.Z` with the intended tag and verify CI/HACS for that exact commit.
-4. Record what was actually tested and what remains unproven. Keep operational procedures in [INSTALL.md](INSTALL.md), architecture and future direction in [VISION.md](VISION.md), and this file as a compact routing and safety guide. Do not duplicate detailed procedures across layers.
+4. Record what was actually tested and what remains unproven. Keep installation and operational instructions in [README.md](README.md), architecture and future direction in [VISION.md](VISION.md), and this file as a compact routing and safety guide. Do not duplicate detailed procedures across layers.
