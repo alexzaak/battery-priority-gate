@@ -1,50 +1,62 @@
-# SENEC–Marstek Gate
+# SENEC–Marstek Gate for Home Assistant
 
-![Inactive gate integration icon](custom_components/senec_marstek_gate/brand/icon.png)
+![SENEC–Marstek Gate icon](custom_components/senec_marstek_gate/brand/icon.png)
 
-A Home Assistant integration and offline decision engine for the **future** coordinated operation of two Marstek Venus batteries alongside an autonomous SENEC system. The released code currently installs an **inactive, read-only diagnostic entry**: it does not take ownership of the batteries or issue device commands. See [VISION.md](VISION.md) for the long-term design and [INSTALL.md](INSTALL.md) for upgrade and rollback details.
+**SENEC–Marstek Gate** is designed to coordinate two Marstek Venus batteries with an autonomous SENEC storage system through Home Assistant. It aims to prevent opposing battery flows, use verified PV surplus for charging, and share a bounded grid-power budget between the Venus devices—without overriding manual control or taking over SENEC.
 
-## Prerequisites
+> [!IMPORTANT]
+> **Product direction, not a claim of current live control.** The features and operating flow below describe the completed product. The released `main` integration (v0.5.2) is diagnostic-only: its HA control loop is inactive, `production_ready=False`, and it cannot command the batteries. Do not enable battery control on the strength of this README. See [Current development status](#current-development-status) and [INSTALL.md](INSTALL.md).
 
-**For diagnostic installation:**
+## Key features
 
-- A Home Assistant instance; [HACS](https://www.hacs.xyz/) for the installation path below. One existing gate config entry may be reused; do not create a duplicate.
-- To see meaningful source and ownership observations, a SENEC system and **two** Marstek Venus devices represented by Home Assistant entities, plus Omnibattery for the current two-device pool. The diagnostic entry can still be installed with missing entities; it must not treat missing data as zero or as an authorization.
-- HA integrations or configuration providing the seven agreed source entities: `sensor.senec_enfluri_net_power_total`, `sensor.senec_battery_state_power`, `sensor.senec_solar_generated_power`, `sensor.marstek_venus_{1,2}_battery_power`, and `sensor.marstek_venus_{1,2}_battery_soc`. The brace notation means one entity for each Venus. The separate `sensor.marstek_venus_{1,2}_ac_power` sensors are for future stop/readback verification, **not** battery-direction inputs.
-- For ownership observations: `sensor.omnibattery_integration_status`, both `switch.marstek_venus_{1,2}_battery_manual_mode` entities, the two `input_boolean.marstek_gate_venus_{1,2}_manueller_vorrang` helpers, `input_boolean.marstek_wartung_beide_manuell`, and `automation.marstek_wartung_beide_manuell_und_0_w`. These must refer to the actual devices; a similarly named entity is not interchangeable.
+*The following describes the intended, technically accepted product; items are not all available in the current release.*
 
-**For development only:** Python 3.13 and the standard library are sufficient to run the offline tests. No live HA or battery connection is needed.
+- **Two batteries, one coordinated gate:** Venus 1 and Venus 2 enter and leave gate control together through an explicitly approved handover from Omnibattery. A pool indicator or Manual switch alone never grants control.
+- **SENEC stays autonomous:** The gate reads validated SENEC battery, PV, and grid measurements but never sends SENEC commands or substitutes for its protection logic.
+- **Avoid opposing battery flows:** When SENEC and a Venus would charge/discharge against each other, the gate blocks or stops its own eligible commands; a manually operated Venus is never commandeered.
+- **PV-aware charging and grid-aware discharge:** Charge only with proven surplus; use confirmed import and device limits for discharge. The Venus devices share one bounded power budget rather than each consuming the full available grid margin.
+- **Manual-first safety:** Manual priority ON, maintenance, stale measurements, uncertain ownership, service timeouts, or lost feedback revoke gate authority. Priority OFF does not silently restore it. Ambiguous partial transitions require explicit recovery, not blind compensating switching.
+- **Observable decisions:** Home Assistant exposes status and reason codes; fresh setpoint and independent AC feedback are required before subsequent commands. A HA state update alone is not proof of physical AC stop.
 
-## Installation (diagnostics only)
+The [vision](VISION.md) explains the architecture and acceptance gates. No savings, PV origin, or physical stop is guaranteed by a dashboard value alone.
 
-1. Back up Home Assistant and, if already installed manually, preserve and compare `/config/custom_components/senec_marstek_gate/`. HACS may replace that directory. Identify the existing config entry and a tested rollback path before upgrading it.
-2. In HACS, add `https://github.com/alexzaak/battery-priority-gate` as a custom repository of type **Integration**. Download the published, reviewed release (the `main` package documented here is v0.5.2); do not select an unreviewed feature branch for HA.
-3. Restart Home Assistant in a controlled manner. If a gate config entry already exists, **keep it**. Otherwise add the SENEC–Marstek Gate integration once via **Settings → Devices & services → Add integration**. The config flow creates a diagnostic-only entry.
-4. Read back the loaded entry, HA logs, and `sensor.senec_marstek_gate_status`: expect state `inaktiv`, `production_ready=False`, `loop_state=inactive`, and the loaded `runtime_version` matching the intended release. Also inspect `source_checks`, `handover_observation`, and unchanged Venus/Omnibattery states. A HACS download or manifest version alone does not prove that HA loaded the new Python code.
-5. If these checks fail, restore the saved integration directory, restart HA, and verify again. **Do not** test an upgrade by switching Manual modes, setpoints, or automations. Detailed checks and rollback boundaries are in [INSTALL.md](INSTALL.md).
+## Requirements
 
-## Functionality
+| Component | What the gate needs |
+| --- | --- |
+| Home Assistant | An instance with the gate's custom integration; HACS is recommended for installation. |
+| SENEC | Read-only battery power, Enfluri grid power, and solar generation entities from the actual installation. SENEC remains under its own controller. |
+| Marstek | **Two** Venus devices with battery power and SoC entities, Manual-mode switches, and separate AC power/readback entities. The exact hardware and control interface must be validated before live use. |
+| Omnibattery | The existing integration's two-device pool status, plus verified separation of its writing authority from the gate's. |
+| Safety inputs | Manual-priority helpers, maintenance state/automation, source freshness and measurement-point evidence, device limits, and independently checked stop feedback. See [INSTALL.md](INSTALL.md) for the current HA state. |
 
-- Read-only HA status sensor with inventory reason codes (`source_checks`) and joint Venus/Omnibattery observation (`handover_observation`); neither field grants write authority.
-- Offline quality assessment of units, metadata, numeric values, per-source `last_reported` freshness, and *externally supplied* topology/sign/heartbeat attestations. `last_updated` is not a substitute for a device report.
-- Offline direction classification and counterflow detection: SENEC and Venus battery power use **positive = charging, negative = discharging**; the Enfluri grid meter uses **positive = import, negative = export**. Deadbands in tests are synthetic, not house settings. `sensor.senec_house_power` is excluded.
-- Offline authority model, bounded two-device power-budget planner, and isolated guarded writer/feedback components. Their simulated intents and readbacks are **not** wired into the installed entry's device-control path. A HA setpoint report or AC sensor timestamp alone does not establish a physical stop.
-- Synthetic scenario tests plus a small, dated historical regression fixture in `fixtures/incident_2026-10-05_062900.json`. It does not prove measurement topology, causality, or production readiness.
+The agreed source IDs are `sensor.senec_enfluri_net_power_total`, `sensor.senec_battery_state_power`, `sensor.senec_solar_generated_power`, `sensor.marstek_venus_{1,2}_battery_power`, and `sensor.marstek_venus_{1,2}_battery_soc` (the braces stand for one entity per device). `sensor.marstek_venus_{1,2}_ac_power` is a **separate** stop-check signal, not a battery-direction input. `sensor.senec_house_power` is excluded from control, accounting, diagnostics, and plausibility checks. IDs, units, sign, measurement point, and freshness must match the actual installation; similar names are not sufficient.
+
+## Installation
+
+**HACS (recommended for the current diagnostic release)**
+
+1. Back up Home Assistant and preserve the existing `/config/custom_components/senec_marstek_gate/` directory if migrating from a manual installation. Plan a restore before allowing HACS to replace that directory.
+2. In HACS, add [`alexzaak/battery-priority-gate`](https://github.com/alexzaak/battery-priority-gate) as a custom **Integration** repository. Install a published, reviewed release; do not install an unreviewed feature branch as a control upgrade.
+3. Restart Home Assistant. Keep an existing gate config entry, or add **SENEC–Marstek Gate** once under **Settings → Devices & services → Add integration** if none exists.
+4. Confirm `sensor.senec_marstek_gate_status` is `inaktiv`, `production_ready=False`, and `loop_state=inactive`; check the loaded `runtime_version`, logs, and unchanged Venus/Omnibattery states. A download or manifest version does not prove that HA loaded new Python code.
+
+**Active operation is not available in this release.** The completed product will require separately approved two-device ownership transfer, validated settings and physical stop evidence before activation. Do not toggle Manual modes, setpoints, or automations to simulate setup. For detailed upgrade verification and rollback, use [INSTALL.md](INSTALL.md).
 
 ## Current development status
 
-- [x] v0.5.2 on `main`: installable diagnostic entry with an inactive loop and `production_ready=False`.
-- [x] Read-only source inventory and two-Venus pool/priority observation; pool state is **not** exclusive-writer proof.
-- [x] Offline quality, direction, authority, planner, guarded writer, and fresh HA feedback logic with automated tests.
-- [ ] A reviewed and merged coordinated takeover/return implementation. Work on this exists separately in [PR #9](https://github.com/alexzaak/battery-priority-gate/pull/9); it is **not** part of the installed `main` entry and must not be treated as approved.
-- [ ] A production-validated controller binding, active control loop, or live battery authorization. None is enabled by installation.
+- [x] Installable HA diagnostic integration with read-only source and two-device ownership observations.
+- [x] Offline quality, direction, counterflow, authority, and shared-budget planning with guarded writer/feedback components and synthetic tests.
+- [ ] Joint takeover/return accepted and merged. The in-progress implementation and its blocking review checklist are in [PR #9](https://github.com/alexzaak/battery-priority-gate/pull/9); it is not part of the installed `main` control path.
+- [ ] Exclusive writer, calibrated telemetry/PV evidence, physical AC-stop attestation, and a production `ControllerBinding` verified in HA.
+- [ ] Explicit live authorization and active control of both Venus devices. The current integration remains inactive.
 
-## TODO before any live control
+## TODO before active use
 
-- [ ] Resolve all PR #9 acceptance sub-checkpoints, including transient pool events, late service effects, complete offline regression coverage, exact-commit CI/HACS results, and independent review. Merge is a separate decision.
-- [ ] Prove exclusive, conflict-free write ownership against Omnibattery, the maintenance automation, app control, and other writers; provide an authenticated one-use approval and a safe, explicit return/recovery procedure for **both** Venus devices.
-- [ ] Validate each source's physical measurement point, sign, freshness, and hardware heartbeat; establish PV-surplus evidence, calibrated limits/deadbands, and a non-duplicated energy balance. Tibber remains a plausibility source, not automatic failover; SENEC remains autonomous.
-- [ ] Demonstrate independently verifiable zero-setpoint and AC-stop behavior, timeouts/late-effect containment, alerts, and rollback with both devices. Offline tests and optimistic HA states are insufficient.
-- [ ] Only after technical acceptance, backup/restore verification, and **Alex's separate explicit live approval**, connect a production binding and verify the exact HA change. No single-device pilot or shadow mode is a substitute for acceptance.
+- [ ] Close PR #9's safety and exact-commit review/CI checkpoints, then decide separately whether to merge.
+- [ ] Prove conflict-free ownership against Omnibattery, the maintenance automation, app control, and other writers; implement authenticated one-use approvals and safe return/recovery for both devices.
+- [ ] Validate sensor topology, sign conventions, freshness/heartbeat, PV surplus, power limits, and a non-duplicated grid budget on the real installation.
+- [ ] Verify independent setpoint/AC stop feedback, late service effects, alarms, backup, and rollback with both devices; offline tests and HA snapshots are not hardware acceptance.
+- [ ] Connect and accept the production HA binding only after these protections are proven and Alex explicitly approves live control. No single-device pilot or shadow mode substitutes for acceptance.
 
-For contributors, start with [AGENTS.md](AGENTS.md); for offline tests run `python3 -m unittest discover -s tests -q` and `python3 -m compileall -q custom_components/senec_marstek_gate tests`.
+Contributing? Start with [AGENTS.md](AGENTS.md). Run offline checks with `python3 -m unittest discover -s tests -q` and `python3 -m compileall -q custom_components/senec_marstek_gate tests`.
