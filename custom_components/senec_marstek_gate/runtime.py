@@ -14,6 +14,7 @@ from .authority import Authority, advance
 from .controller import CycleState, Evidence, Limits, evaluate
 from .quality import REQUIRED, assess
 from .writer import apply_request, WriteBlocked, ReadbackFailed
+from .handover import inspect_handover
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +70,13 @@ class GateRuntime:
         eid = data.get('entity_id')
         current = data.get('new_state')
         state = getattr(current, 'state', None)
+        if eid in ('sensor.omnibattery_integration_status',
+                   'automation.marstek_wartung_beide_manuell_und_0_w'):
+            if not inspect_handover(self.hass.states).handover_observed:
+                self.authority = advance(self.authority, 'restart')
+                self.cycle = CycleState()
+                self.last_reason = 'pool_handover_lost'
+            return
         if eid == 'input_boolean.marstek_wartung_beide_manuell':
             if state == 'on':
                 self.authority = advance(self.authority, 'maintenance_on')
@@ -134,6 +142,12 @@ class GateRuntime:
                 self.authority = Authority()
                 self.cycle = CycleState()
                 return 'manual_switch_unknown_or_off'
+        if owned:
+            handover = inspect_handover(self.hass.states)
+            if not handover.handover_observed:
+                self.authority = advance(self.authority, 'restart')
+                self.cycle = CycleState()
+                return handover.reason
         return 'ok'
 
     def _live_guard(self, device: int) -> bool:
@@ -146,6 +160,8 @@ class GateRuntime:
         if self._flag(f'input_boolean.marstek_gate_venus_{device}_manueller_vorrang') != 'off':
             return False
         if self._flag(f'switch.marstek_venus_{device}_battery_manual_mode') != 'on':
+            return False
+        if not inspect_handover(self.hass.states).handover_observed:
             return False
         return self.activation.write_guard(device) is True
 

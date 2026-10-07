@@ -23,6 +23,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         'input_boolean.marstek_gate_venus_2_manueller_vorrang',
         'switch.marstek_venus_1_battery_manual_mode',
         'switch.marstek_venus_2_battery_manual_mode',
+        'sensor.omnibattery_integration_status',
+        'automation.marstek_wartung_beide_manuell_und_0_w',
     ], runtime.handle_state_change)
     return True
 

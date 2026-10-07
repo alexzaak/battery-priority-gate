@@ -39,6 +39,11 @@ class States:
         for i in (1, 2):
             eid = f'switch.marstek_venus_{i}_battery_manual_mode'
             self.values[eid] = self.state(eid, 'on', now)
+        self.values['automation.marstek_wartung_beide_manuell_und_0_w'] = self.state(
+            'automation.marstek_wartung_beide_manuell_und_0_w', 'on', now)
+        self.values['sensor.omnibattery_integration_status'] = self.state(
+            'sensor.omnibattery_integration_status', 'charging', now,
+            {'automatic_batteries': [], 'manual_batteries': ['Marstek Venus 1', 'Marstek Venus 2']})
 
     @staticmethod
     def state(eid, value, now, attrs=None):
@@ -162,6 +167,39 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await runtime.async_tick(hass.states.now), 'interlock_or_readback_failure')
         self.assertTrue(runtime.authority.inhibited)
         self.assertEqual(await runtime.async_tick(hass.states.now + timedelta(seconds=1)), 'inhibited')
+
+    async def test_pool_loss_event_revokes_without_waiting_for_tick(self):
+        hass = HA(NOW)
+        runtime = GateRuntime(hass, binding(hass), Authority('gate_beide', 'enfluri', False))
+        status = hass.states.values['sensor.omnibattery_integration_status']
+        status.attributes['automatic_batteries'] = ['Marstek Venus 1']
+        runtime.handle_state_change(SimpleNamespace(data={'entity_id': status.entity_id, 'new_state': status}))
+        self.assertTrue(runtime.authority.inhibited)
+        self.assertEqual(runtime.last_reason, 'pool_handover_lost')
+        self.assertFalse(runtime._live_guard(1))
+        self.assertEqual(hass.calls, [])
+
+    async def test_pool_mismatch_before_cycle_blocks_writes(self):
+        hass = HA(NOW)
+        runtime = GateRuntime(hass, binding(hass), Authority('gate_beide', 'enfluri', False))
+        hass.states.values['sensor.omnibattery_integration_status'].attributes['automatic_batteries'] = ['Marstek Venus 1']
+        self.assertEqual(await runtime.async_tick(NOW), 'pool_ambiguous')
+        self.assertTrue(runtime.authority.inhibited)
+        self.assertEqual(hass.calls, [])
+
+    async def test_pool_loss_between_zero_and_positive_blocks_write(self):
+        hass = HA(NOW)
+        runtime = GateRuntime(hass, binding(hass), Authority('gate_venus_1', 'enfluri', False))
+        await runtime.async_tick(NOW)
+        hass.states.advance(NOW + timedelta(seconds=10))
+        original = hass.async_call
+        async def loses_pool(domain, service, data, blocking=False):
+            await original(domain, service, data, blocking)
+            if len(hass.calls) == 2:
+                hass.states.values['sensor.omnibattery_integration_status'].attributes['automatic_batteries'] = ['Marstek Venus 1']
+        hass.services = SimpleNamespace(async_call=loses_pool)
+        self.assertEqual(await runtime.async_tick(hass.states.now), 'interlock_or_readback_failure')
+        self.assertTrue(all(v == 0 for _, v in hass.calls))
 
     async def test_unverified_source_or_external_guard_blocks(self):
         hass = HA(NOW)
