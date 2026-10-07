@@ -6,6 +6,7 @@ constructs one: simply installing or reloading cannot enable battery writes.
 """
 import asyncio
 from dataclasses import dataclass
+from types import SimpleNamespace
 from datetime import datetime
 import logging
 from typing import Callable, Mapping, Awaitable
@@ -124,7 +125,13 @@ class GateRuntime:
         state = getattr(current, 'state', None)
         if eid in ('sensor.omnibattery_integration_status',
                    'automation.marstek_wartung_beide_manuell_und_0_w'):
-            if not inspect_handover(self.hass.states).handover_observed:
+            # Event snapshots may describe a transient loss already restored in
+            # hass.states. A loss seen in either view must remain latched.
+            incoming_states=SimpleNamespace(get=lambda requested:
+                current if requested==eid else self.hass.states.get(requested))
+            lost=(not inspect_handover(incoming_states).handover_observed or
+                  not inspect_handover(self.hass.states).handover_observed)
+            if lost:
                 if (self.handover is not None and
                         (self.handover.phase=='held' or self.handover.stop_in_progress)):
                     self._invalidate_lease()
