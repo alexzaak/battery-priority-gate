@@ -15,7 +15,7 @@ from .authority import Authority, advance
 from .controller import CycleState, Evidence, Limits, evaluate
 from .quality import REQUIRED, assess
 from .writer import apply_request, WriteBlocked, ReadbackFailed
-from .handover import inspect_handover
+from .handover import inspect_handover, classify_pool, is_pool_permissible
 from .handover_protocol import HandoverCoordinator, HandoverDenied
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,17 +135,28 @@ class GateRuntime:
                 handover=self.handover
                 automation_lost=(eid=='automation.marstek_wartung_beide_manuell_und_0_w' and
                                  (state!='on' or self._flag(eid)!='on'))
-                pool_unknown=(eid=='sensor.omnibattery_integration_status' and
-                              inspect_handover(incoming_states).reason in
-                              ('omnibattery_unknown','pool_unknown','pool_ambiguous'))
-                if (handover is not None and
-                        (handover.phase=='held' or handover.stop_in_progress or
-                         (handover.phase in ('transferring','releasing') and
-                          (automation_lost or pool_unknown)))):
+                switches=(self._flag('switch.marstek_venus_1_battery_manual_mode'),
+                          self._flag('switch.marstek_venus_2_battery_manual_mode'))
+                phase=getattr(handover,'phase','unowned') if handover is not None else 'unowned'
+                stop_in_progress=bool(getattr(handover,'stop_in_progress',False)) if handover is not None else False
+                pool_invalid=(eid=='sensor.omnibattery_integration_status' and
+                              (not is_pool_permissible(phase, switches, classify_pool(current),
+                                                       stop_in_progress=stop_in_progress) or
+                               not is_pool_permissible(phase, switches, classify_pool(self._state(eid)),
+                                                       stop_in_progress=stop_in_progress)))
+                should_invalidate=(handover is not None and
+                                   (handover.phase=='held' or handover.stop_in_progress or
+                                    (handover.phase in ('transferring','releasing') and
+                                     (automation_lost or pool_invalid))))
+                if should_invalidate:
                     self._invalidate_lease()
-                self.authority = advance(self.authority, 'restart')
-                self.cycle = CycleState()
-                self.last_reason = 'pool_handover_lost'
+                    self.authority = advance(self.authority, 'restart')
+                    self.cycle = CycleState()
+                    self.last_reason = 'pool_handover_lost'
+                elif handover is None or handover.phase not in ('transferring','releasing'):
+                    self.authority = advance(self.authority, 'restart')
+                    self.cycle = CycleState()
+                    self.last_reason = 'pool_handover_lost'
             return
         if eid == 'input_boolean.marstek_wartung_beide_manuell':
             if state == 'on':

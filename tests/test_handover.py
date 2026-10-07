@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from offline_package import prepare
 prepare()
-from custom_components.senec_marstek_gate.handover import inspect_handover
+from custom_components.senec_marstek_gate.handover import inspect_handover, classify_pool, is_pool_permissible
 
 NOW = datetime(2026, 10, 7, 6, tzinfo=timezone.utc)
 
@@ -81,6 +81,61 @@ class HandoverTests(unittest.TestCase):
     def test_manual_pool_does_not_prove_physical_stop_or_no_other_writer(self):
         self.manual()
         self.assertFalse(self.check().exclusive_writer_proven)
+
+    def test_classify_pool_matrix(self):
+        def pool(auto, man, state='charging', eid='sensor.omnibattery_integration_status'):
+            return SimpleNamespace(entity_id=eid, state=state,
+                                    attributes={'automatic_batteries': auto, 'manual_batteries': man})
+        self.assertEqual(classify_pool(pool(['Marstek Venus 1', 'Marstek Venus 2'], [])), 'both_auto')
+        self.assertEqual(classify_pool(pool(['Marstek Venus 2'], ['Marstek Venus 1'])), 'partial_takeover')
+        self.assertEqual(classify_pool(pool(['Marstek Venus 1'], ['Marstek Venus 2'])), 'partial_return')
+        self.assertEqual(classify_pool(pool([], ['Marstek Venus 1', 'Marstek Venus 2'])), 'both_manual')
+        # Unclear cases
+        self.assertEqual(classify_pool(None), 'unclear')
+        self.assertEqual(classify_pool(pool([], [], state='unavailable')), 'unclear')
+        self.assertEqual(classify_pool(pool([], [], state='unknown')), 'unclear')
+        self.assertEqual(classify_pool(pool([], [], eid='other_sensor')), 'unclear')
+        self.assertEqual(classify_pool(pool(['Marstek Venus 1', 'Marstek Venus 1'], [])), 'unclear')
+        self.assertEqual(classify_pool(pool(['Marstek Venus 1'], ['Marstek Venus 1'])), 'unclear')
+        self.assertEqual(classify_pool(pool(['Marstek Venus 1'], [])), 'unclear')
+        self.assertEqual(classify_pool(SimpleNamespace(entity_id='sensor.omnibattery_integration_status', state='charging', attributes='invalid')), 'unclear')
+
+    def test_is_pool_permissible_matrix(self):
+        # Stop in progress requires ('on', 'on') and both_manual
+        self.assertTrue(is_pool_permissible('transferring', ('on', 'on'), 'both_manual', stop_in_progress=True))
+        self.assertFalse(is_pool_permissible('transferring', ('on', 'on'), 'partial_takeover', stop_in_progress=True))
+        self.assertFalse(is_pool_permissible('held', ('on', 'on'), 'both_auto', stop_in_progress=True))
+
+        # Held requires ('on', 'on') and both_manual
+        self.assertTrue(is_pool_permissible('held', ('on', 'on'), 'both_manual'))
+        self.assertFalse(is_pool_permissible('held', ('on', 'on'), 'partial_takeover'))
+        self.assertFalse(is_pool_permissible('held', ('on', 'off'), 'both_manual'))
+
+        # Transferring phase
+        self.assertTrue(is_pool_permissible('transferring', ('off', 'off'), 'both_auto'))
+        self.assertFalse(is_pool_permissible('transferring', ('off', 'off'), 'both_manual'))
+        self.assertTrue(is_pool_permissible('transferring', ('on', 'off'), 'partial_takeover'))
+        self.assertFalse(is_pool_permissible('transferring', ('on', 'off'), 'both_auto'))  # Reversion blocked!
+        self.assertFalse(is_pool_permissible('transferring', ('on', 'off'), 'both_manual'))
+        self.assertTrue(is_pool_permissible('transferring', ('on', 'on'), 'partial_takeover'))
+        self.assertTrue(is_pool_permissible('transferring', ('on', 'on'), 'both_manual'))
+        self.assertFalse(is_pool_permissible('transferring', ('on', 'on'), 'both_auto'))
+        self.assertFalse(is_pool_permissible('transferring', ('off', 'on'), 'partial_takeover'))
+
+        # Releasing phase
+        self.assertTrue(is_pool_permissible('releasing', ('on', 'on'), 'both_manual'))
+        self.assertFalse(is_pool_permissible('releasing', ('on', 'on'), 'both_auto'))
+        self.assertTrue(is_pool_permissible('releasing', ('off', 'on'), 'partial_return'))
+        self.assertFalse(is_pool_permissible('releasing', ('off', 'on'), 'both_manual'))  # Reversion blocked!
+        self.assertFalse(is_pool_permissible('releasing', ('off', 'on'), 'both_auto'))
+        self.assertTrue(is_pool_permissible('releasing', ('off', 'off'), 'partial_return'))
+        self.assertTrue(is_pool_permissible('releasing', ('off', 'off'), 'both_auto'))
+        self.assertFalse(is_pool_permissible('releasing', ('off', 'off'), 'both_manual'))
+        self.assertFalse(is_pool_permissible('releasing', ('on', 'off'), 'partial_return'))
+
+        # Unclear always rejected
+        self.assertFalse(is_pool_permissible('transferring', ('on', 'off'), 'unclear'))
+        self.assertFalse(is_pool_permissible('held', ('on', 'on'), 'unclear'))
 
 if __name__ == '__main__':
     unittest.main()
